@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool Call {{.ToolCallID}} - Session {{.Session.ID}}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  main { max-width: none; margin: 0 auto; padding: 1.5em 2em 2em; }
+
+  .sub-nav { display: flex; gap: 0.5em; align-items: center; margin-bottom: 1.5em; }
+  .sub-nav .back { color: #78716c; font-size: 0.8125em; text-decoration: none; }
+  .sub-nav .back:hover { color: #1c1917; }
+  .sub-nav .sep { color: #d6d3d1; margin: 0 0.375em; }
+
+  h1 { font-size: 1.5em; font-weight: 700; color: #1c1917; letter-spacing: -0.025em; margin: 0 0 1em; }
+  h2 { font-size: 1.15em; font-weight: 600; color: #1c1917; letter-spacing: -0.015em; margin: 1.5em 0 0.75em; }
+
+  .meta { background: #fff; padding: 1.25em 1.5em; border-radius: 8px; border: 1px solid #e7e5e4; margin-bottom: 1.5em; }
+  .meta dl { display: grid; grid-template-columns: 11em 1fr; gap: 0.4em 1.25em; margin: 0; }
+  .meta dt { font-size: 0.75em; font-weight: 600; color: #78716c; text-transform: uppercase; letter-spacing: 0.03em; padding-top: 0.15em; }
+  .meta dd { margin: 0; font-size: 0.875em; color: #1c1917; }
+
+  .status { display: inline-block; padding: 0.2em 0.625em; border-radius: 9999px; font-size: 0.75em; font-weight: 600; letter-spacing: 0.01em; }
+  .status-pending { background: #fef9c3; color: #854d0e; }
+  .status-in-progress { background: #dbeafe; color: #1e40af; }
+  .status-completed { background: #dcfce7; color: #166534; }
+  .status-failed { background: #fee2e2; color: #991b1b; }
+
+  .section { background: #fff; padding: 1.25em 1.5em; border-radius: 8px; border: 1px solid #e7e5e4; margin-bottom: 1.5em; }
+  .section-title { font-size: 0.75em; font-weight: 600; color: #78716c; text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.75em; }
+
+  .content-block { white-space: pre-wrap; word-break: break-word; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; line-height: 1.6; background: #fafaf9; padding: 1em; border-radius: 6px; border: 1px solid #e7e5e4; max-height: 40em; overflow-y: auto; }
+  .content-block-full { max-height: none; }
+
+  .kv-table { width: 100%; border-collapse: collapse; }
+  .kv-table td { padding: 0.5em 0.75em; font-size: 0.8125em; border-bottom: 1px solid #f5f5f4; vertical-align: top; }
+  .kv-table td:first-child { font-weight: 600; color: #78716c; width: 14em; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; }
+  .kv-table td:last-child { word-break: break-word; }
+  .kv-table tr:last-child td { border-bottom: none; }
+
+  .diff-block { background: #fafaf9; padding: 1em; border-radius: 6px; border: 1px solid #e7e5e4; margin-bottom: 0.75em; }
+  .diff-path { font-weight: 600; font-size: 0.8125em; margin-bottom: 0.5em; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .diff-content { white-space: pre-wrap; word-break: break-word; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; line-height: 1.5; max-height: 30em; overflow-y: auto; }
+
+  @media (max-width: 768px) {
+    header { padding: 0 1em; }
+    main { padding: 1em 1em 1.5em; }
+    .meta dl { grid-template-columns: 1fr; }
+    .meta dt { margin-top: 0.5em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Projects</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="sub-nav">
+  <a href="/" class="back">&larr; All sessions</a>
+  <span class="sep">|</span>
+  <a href="/session/{{.Session.ID}}" class="back">Session</a>
+</div>
+
+<h1>Tool Call</h1>
+
+<div id="parsed-content"></div>
+
+<h2>Raw Payloads</h2>
+{{range $i, $log := .Logs}}
+<div class="section">
+  <div class="section-title">Event #{{plusOne $i}} &mdash; {{$log.EventType}} &mdash; {{$log.CreatedAt.Format "15:04:05.000"}}</div>
+  <div class="content-block content-block-full raw-payload-item">{{bytesToString $log.Payload}}</div>
+</div>
+{{end}}
+
+<script id="logs-data" type="application/json">[{{range $i, $log := .Logs}}{{if $i}},{{end}}{"id":{{$log.ID}},"eventType":"{{$log.EventType}}","time":"{{$log.CreatedAt.Format "15:04:05.000"}}","payload":{{bytesToString $log.Payload}}}{{end}}]</script>
+<script>
+(function() {
+  var logs;
+  try {
+    logs = JSON.parse(document.getElementById('logs-data').textContent);
+  } catch(e) {
+    logs = [];
+  }
+
+  // Format raw payload blocks
+  var rawBlocks = document.querySelectorAll('.raw-payload-item');
+  for (var i = 0; i < rawBlocks.length; i++) {
+    try {
+      var parsed = JSON.parse(rawBlocks[i].textContent);
+      rawBlocks[i].textContent = JSON.stringify(parsed, null, 2);
+    } catch(e) {}
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+
+  // Decode a value that might be a base64-encoded byte array (shows as array of numbers in JSON).
+  // The ACP SDK serializes []byte / content blocks that may end up as number arrays.
+  function decodeValue(val) {
+    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'number') {
+      // Looks like a byte array — try to decode as UTF-8 string
+      try {
+        var s = '';
+        for (var i = 0; i < val.length; i++) s += String.fromCharCode(val[i]);
+        return decodeURIComponent(escape(s));
+      } catch(e) {
+        return val;
+      }
+    }
+    return val;
+  }
+
+  function renderValue(val) {
+    val = decodeValue(val);
+    if (val === null || val === undefined) return '<em style="color:#a8a29e">null</em>';
+    if (typeof val === 'boolean') return '<code>' + val + '</code>';
+    if (typeof val === 'number') return '<code>' + val + '</code>';
+    if (typeof val === 'string') {
+      if (val.length > 200) {
+        return '<div class="content-block">' + escapeHtml(val) + '</div>';
+      }
+      return escapeHtml(val);
+    }
+    if (typeof val === 'object') {
+      return '<div class="content-block">' + escapeHtml(JSON.stringify(val, null, 2)) + '</div>';
+    }
+    return escapeHtml(String(val));
+  }
+
+  function buildKVTable(obj, title) {
+    var keys = Object.keys(obj);
+    if (keys.length === 0) return '';
+    var html = '<div class="section">';
+    if (title) html += '<div class="section-title">' + escapeHtml(title) + '</div>';
+    html += '<table class="kv-table">';
+    for (var i = 0; i < keys.length; i++) {
+      html += '<tr><td>' + escapeHtml(keys[i]) + '</td><td>' + renderValue(obj[keys[i]]) + '</td></tr>';
+    }
+    html += '</table></div>';
+    return html;
+  }
+
+  // Extract text from a ToolCallContent array
+  function renderToolCallContent(contentArr) {
+    if (!Array.isArray(contentArr) || contentArr.length === 0) return '';
+    var html = '';
+    for (var i = 0; i < contentArr.length; i++) {
+      var item = contentArr[i];
+      if (!item) continue;
+      // content variant: {type:"content", content:{type:"text", text:"..."}}
+      if (item.type === 'content' && item.content) {
+        var block = item.content;
+        if (block.text) {
+          html += '<div class="content-block content-block-full">' + escapeHtml(block.text) + '</div>';
+        } else {
+          html += '<div class="content-block">' + escapeHtml(JSON.stringify(block, null, 2)) + '</div>';
+        }
+      // diff variant: {type:"diff", path:"...", oldText:"...", newText:"..."}
+      } else if (item.type === 'diff') {
+        html += '<div class="diff-block">';
+        html += '<div class="diff-path">' + escapeHtml(item.path || '') + '</div>';
+        if (item.oldText != null) {
+          html += '<div class="section-title">Old</div>';
+          html += '<div class="diff-content">' + escapeHtml(item.oldText) + '</div>';
+        }
+        html += '<div class="section-title">New</div>';
+        html += '<div class="diff-content">' + escapeHtml(item.newText || '') + '</div>';
+        html += '</div>';
+      // terminal variant
+      } else if (item.type === 'terminal') {
+        html += '<div class="content-block">Terminal: ' + escapeHtml(item.terminalId || '') + '</div>';
+      } else {
+        html += '<div class="content-block">' + escapeHtml(JSON.stringify(item, null, 2)) + '</div>';
+      }
+    }
+    return html;
+  }
+
+  // Merge all log payloads into a combined tool call state
+  var merged = {};
+  for (var i = 0; i < logs.length; i++) {
+    var p = logs[i].payload;
+    if (!p) continue;
+    if (p.toolCallId && !merged.toolCallId) merged.toolCallId = p.toolCallId;
+    if (p.kind) merged.kind = p.kind;
+    if (p.title) merged.title = p.title;
+    if (p.status) merged.status = p.status;
+    if (p.rawInput) merged.rawInput = p.rawInput;
+    if (p.rawOutput) merged.rawOutput = p.rawOutput;
+    // For content, use the latest non-empty value (updates replace content)
+    if (p.content && ((Array.isArray(p.content) && p.content.length > 0) || !Array.isArray(p.content))) {
+      merged.content = p.content;
+    }
+    if (p.locations) merged.locations = p.locations;
+  }
+
+  // Build parsed content
+  var container = document.getElementById('parsed-content');
+  var html = '';
+
+  // Tool info
+  var headerFields = {};
+  if (merged.toolCallId) headerFields['toolCallId'] = merged.toolCallId;
+  if (merged.kind) headerFields['kind'] = merged.kind;
+  if (merged.title) headerFields['title'] = merged.title;
+  if (merged.status) headerFields['status'] = merged.status;
+  if (Object.keys(headerFields).length > 0) {
+    html += buildKVTable(headerFields, 'Tool Info');
+  }
+
+  // Input
+  if (merged.rawInput && typeof merged.rawInput === 'object') {
+    html += buildKVTable(merged.rawInput, 'Input');
+  }
+
+  // Content (ToolCallContent array)
+  if (merged.content) {
+    if (Array.isArray(merged.content)) {
+      var contentHtml = renderToolCallContent(merged.content);
+      if (contentHtml) {
+        html += '<div class="section"><div class="section-title">Content</div>' + contentHtml + '</div>';
+      }
+    } else if (typeof merged.content === 'string') {
+      html += '<div class="section"><div class="section-title">Content</div>';
+      html += '<div class="content-block content-block-full">' + escapeHtml(merged.content) + '</div></div>';
+    } else {
+      html += buildKVTable(merged.content, 'Content');
+    }
+  }
+
+  // Raw output
+  if (merged.rawOutput) {
+    var rawOut = decodeValue(merged.rawOutput);
+    if (typeof rawOut === 'string') {
+      html += '<div class="section"><div class="section-title">Output</div>';
+      html += '<div class="content-block content-block-full">' + escapeHtml(rawOut) + '</div></div>';
+    } else if (typeof rawOut === 'object') {
+      html += buildKVTable(rawOut, 'Output');
+    }
+  }
+
+  // Locations
+  if (merged.locations && Array.isArray(merged.locations) && merged.locations.length > 0) {
+    var locHtml = '<div class="section"><div class="section-title">Locations</div>';
+    for (var i = 0; i < merged.locations.length; i++) {
+      var loc = merged.locations[i];
+      locHtml += '<div style="font-size:0.8125em;padding:0.25em 0;font-family:monospace">' + escapeHtml(loc.uri || JSON.stringify(loc)) + '</div>';
+    }
+    locHtml += '</div>';
+    html += locHtml;
+  }
+
+  container.innerHTML = html;
+})();
+</script>
+</main>
+</body>
+</html>

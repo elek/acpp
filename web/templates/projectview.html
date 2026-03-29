@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACPP Projects</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; height: 100vh; overflow: hidden; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  .layout { display: flex; height: calc(100vh - 3.25em); overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 240px; min-width: 200px; background: #fff; border-right: 1px solid #e7e5e4; overflow-y: auto; flex-shrink: 0; height: 100%; }
+  .sidebar-header { padding: 0.875em 1em 0.5em; font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; }
+  .project-item { display: flex; align-items: center; padding: 0.375em 1em; font-size: 0.8125em; color: #44403c; cursor: pointer; transition: background 0.15s; text-decoration: none; gap: 0.375em; }
+  .project-item:hover { background: #f5f5f4; text-decoration: none; color: #1c1917; }
+  .project-item.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+  .project-item .hash { color: #a8a29e; font-weight: 400; }
+  .project-item.active .hash { color: #93c5fd; }
+  .project-item .running-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; margin-left: auto; flex-shrink: 0; }
+
+  /* Main content area */
+  .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+  /* Session selector bar */
+  .session-bar { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0.5em 1.5em; display: flex; align-items: center; gap: 1em; flex-shrink: 0; }
+  .session-bar .project-title { font-weight: 700; font-size: 0.9375em; color: #1c1917; }
+  .session-bar select { padding: 0.25em 0.5em; border: 1px solid #e7e5e4; border-radius: 6px; font-size: 0.8125em; font-family: inherit; color: #1c1917; background: #fff; }
+  .session-bar .session-link { font-size: 0.75em; color: #78716c; }
+  .session-bar .session-status { display: inline-block; padding: 0.15em 0.5em; border-radius: 9999px; font-size: 0.6875em; font-weight: 600; }
+  .status-running { background: #dcfce7; color: #166534; }
+  .status-complete { background: #dbeafe; color: #1e40af; }
+  .status-error { background: #fee2e2; color: #991b1b; }
+  .status-pending { background: #fef9c3; color: #854d0e; }
+  .stop-btn { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; padding: 0.2em 0.75em; border-radius: 6px; font-size: 0.75em; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+  .stop-btn:hover { background: #fecaca; }
+
+  /* Conversation area */
+  .conversation-area { flex: 1; overflow-y: auto; padding: 1.5em 2em 2em; }
+
+  .msg { margin-bottom: 1em; padding: 0.875em 1.25em; border-radius: 6px; }
+  .msg-user { background: #eff6ff; border-left: 3px solid #3b82f6; }
+  .msg-user .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #2563eb; margin-bottom: 0.375em; }
+  .msg-assistant { background: #fff; border: 1px solid #e7e5e4; border-left: 3px solid #8b5cf6; }
+  .msg-assistant .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #7c3aed; margin-bottom: 0.375em; }
+  .msg-thought { background: #fafaf9; border: 1px solid #e7e5e4; border-left: 3px solid #a8a29e; font-style: italic; }
+  .msg-thought .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #a8a29e; margin-bottom: 0.375em; }
+  .msg-content { white-space: pre-wrap; word-break: break-word; font-size: 0.875em; line-height: 1.65; color: #1c1917; }
+  .msg-content code { background: #f5f5f4; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.85em; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .msg-content pre { background: #1e1e2e; color: #cdd6f4; padding: 1em; border-radius: 6px; overflow-x: auto; margin: 0.75em 0; font-size: 0.85em; line-height: 1.5; border: 1px solid #313244; }
+  .msg-content pre code { background: transparent; padding: 0; color: inherit; }
+
+  .tool-usage { margin: 0.375em 0; padding: 0.5em 0.875em; background: #f5f5f4; border-radius: 6px; border: 1px solid #e7e5e4; font-size: 0.8125em; transition: background 0.15s, border-color 0.15s; }
+  a:hover .tool-usage { background: #eff6ff; border-color: #bfdbfe; }
+  .tool-usage .tool-header { font-weight: 500; color: #44403c; }
+  .tool-usage .tool-params { color: #78716c; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; margin-top: 0.25em; }
+
+  .plan-box { margin: 0.75em 0; padding: 0.75em 1.125em; background: #fefce8; border: 1px solid #fde68a; border-radius: 6px; font-size: 0.8125em; }
+  .plan-header { font-weight: 700; color: #854d0e; margin-bottom: 0.375em; }
+  .plan-bar { font-family: monospace; letter-spacing: 1px; }
+  .plan-entry { margin: 0.2em 0; color: #44403c; }
+
+  .prompt-separator { border: none; border-top: 2px solid #e7e5e4; margin: 2em 0; }
+  .loading { color: #78716c; font-style: italic; padding: 2em; text-align: center; }
+  .empty-state { text-align: center; padding: 3em 1em; color: #78716c; }
+
+  /* Prompt input bar */
+  .prompt-bar { background: #fff; border-top: 1px solid #e7e5e4; padding: 0.75em 1.5em; flex-shrink: 0; }
+  .prompt-bar-inner { display: flex; gap: 0.5em; align-items: flex-end; }
+  .prompt-bar textarea { flex: 1; resize: none; border: 1px solid #d6d3d1; border-radius: 8px; padding: 0.625em 0.875em; font-family: inherit; font-size: 0.875em; line-height: 1.5; color: #1c1917; background: #fafaf9; outline: none; transition: border-color 0.15s; min-height: 2.5em; max-height: 10em; overflow-y: auto; }
+  .prompt-bar textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+  .prompt-bar textarea:disabled { background: #f5f5f4; color: #a8a29e; }
+  .prompt-bar button { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 0.625em 1.25em; font-size: 0.875em; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .prompt-bar button:hover { background: #1d4ed8; }
+  .prompt-bar button:disabled { background: #93c5fd; cursor: not-allowed; }
+  .prompt-bar-hint { font-size: 0.6875em; color: #a8a29e; margin-top: 0.25em; }
+
+  /* Quick search overlay */
+  .qs-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 15vh; }
+  .qs-overlay.open { display: flex; }
+  .qs-box { background: #fff; border-radius: 10px; width: 560px; max-width: 90vw; box-shadow: 0 16px 48px rgba(0,0,0,0.2); overflow: hidden; }
+  .qs-input-wrap { padding: 12px 16px; border-bottom: 1px solid #e7e5e4; }
+  .qs-input-wrap input { width: 100%; border: none; outline: none; font-size: 1.125em; font-family: inherit; color: #1c1917; background: transparent; }
+  .qs-input-wrap input::placeholder { color: #a8a29e; }
+  .qs-section-label { padding: 10px 16px 4px; font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; }
+  .qs-results { max-height: 320px; overflow-y: auto; padding-bottom: 4px; }
+  .qs-item { display: flex; align-items: center; padding: 6px 16px; cursor: pointer; gap: 8px; font-size: 0.875em; color: #44403c; }
+  .qs-item:hover, .qs-item.qs-active { background: #f5f5f4; }
+  .qs-item .qs-hash { color: #a8a29e; font-weight: 400; }
+  .qs-item .qs-name { flex: 1; }
+  .qs-item .qs-agent { font-size: 0.75em; color: #a8a29e; }
+  .qs-item .qs-running { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+  .qs-empty { padding: 16px; text-align: center; color: #a8a29e; font-size: 0.875em; }
+  .qs-hint { padding: 8px 16px; border-top: 1px solid #e7e5e4; font-size: 0.6875em; color: #a8a29e; display: flex; gap: 12px; }
+  .qs-hint kbd { background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: 3px; padding: 0 4px; font-family: inherit; font-size: 0.9em; }
+
+
+  /* Meta view table */
+  .meta-table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e7e5e4; }
+  .meta-table-wrap table { border-collapse: collapse; width: 100%; background: #fff; }
+  .meta-table-wrap th { padding: 0.625em 1em; text-align: left; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; background: #fafaf9; border-bottom: 1px solid #e7e5e4; }
+  .meta-table-wrap td { padding: 0.625em 1em; font-size: 0.8125em; color: #1c1917; border-bottom: 1px solid #f5f5f4; }
+  .meta-table-wrap tr:hover td { background: #f5f5f4; }
+  .meta-table-wrap tr:last-child td { border-bottom: none; }
+  .meta-table-wrap .cost { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; font-weight: 500; }
+  .meta-table-wrap .tokens { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; color: #78716c; }
+  .session-bar .session-link.active { color: #2563eb; font-weight: 600; }
+  @media (max-width: 768px) {
+    .sidebar { width: 180px; min-width: 160px; }
+    header { padding: 0 1em; }
+    .conversation-area { padding: 1em; }
+    .prompt-bar { padding: 0.75em 1em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Projects</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<div class="layout">
+  <div class="sidebar">
+    <div class="sidebar-header">Projects</div>
+    {{range .Projects}}
+    <a href="/projects?project={{.Name}}" class="project-item{{if eq $.ActiveProject .Name}} active{{end}}">
+      <span class="hash">#</span>{{.Name}}{{if .HasRunning}}<span class="running-dot" title="Running session"></span>{{end}}
+    </a>
+    {{end}}
+  </div>
+  <div class="main-content">
+    {{if .ActiveProject}}
+    <div class="session-bar">
+      <span class="project-title">{{.ActiveProject}}</span>
+      {{if .Sessions}}
+      <select id="session-select">
+        {{range .Sessions}}
+        <option value="{{.ID}}"{{if eq $.ActiveSessionID .ID}} selected{{end}}>
+          {{.CreatedAt.Format "Jan 2 15:04"}} — {{.Status}}{{if gt .PromptCount 0}} ({{.PromptCount}} prompts){{end}}
+        </option>
+        {{end}}
+      </select>
+      {{end}}
+      {{if .ActiveSession}}
+      <span class="session-status status-{{.ActiveSession.Status}}">{{.ActiveSession.Status}}</span>
+      {{if or (eq .ActiveSession.Status "running") (eq .ActiveSession.Status "pending")}}
+      <form method="POST" action="/session/{{.ActiveSession.ID}}/stop" style="display:inline;margin:0">
+        <button type="submit" class="stop-btn">Stop</button>
+      </form>
+      {{end}}
+      <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
+      {{end}}
+    </div>
+    <div class="conversation-area" id="conversation">
+      {{if .ActiveSession}}
+      <p class="loading">Loading events...</p>
+      {{else}}
+      <div class="empty-state">
+        <p>No sessions for this project yet.</p>
+        <p>Send a message below to start a new session.</p>
+      </div>
+      {{end}}
+    </div>
+    <div class="conversation-area" id="meta-view" style="display:none">
+      <div class="meta-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Source</th>
+            <th>Agent</th>
+            <th>Status</th>
+            <th>Model</th>
+            <th>Cost</th>
+            <th>Tokens (in/out)</th>
+            <th>Prompts</th>
+            <th>Duration</th>
+            <th>Created</th>
+            <th>Finished</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Sessions}}
+          <tr>
+            <td><a href="/projects?project={{$.ActiveProject}}&session={{.ID}}">{{.ID}}</a></td>
+            <td>{{.SourceName}}</td>
+            <td>{{.Agent}}</td>
+            <td><span class="status status-{{.Status}}">&#x2022; {{.Status}}</span></td>
+            <td>{{.Model}}</td>
+            <td class="cost">${{printf "%.4f" .CostUSD}}</td>
+            <td class="tokens">{{.InputTokens}} / {{.OutputTokens}}</td>
+            <td>{{.PromptCount}}</td>
+            <td>{{formatDurationMs .PromptDurationMs}}</td>
+            <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+            <td>{{if .FinishedAt}}{{.FinishedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="prompt-bar">
+      <div class="prompt-bar-inner">
+        <textarea id="prompt-input" placeholder="Send a prompt..." rows="1"></textarea>
+        <button id="prompt-send">Send</button>
+      </div>
+      <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline</div>
+    </div>
+    {{else}}
+    <div class="conversation-area">
+      <div class="empty-state">
+        <p>Select a project from the sidebar to view sessions.</p>
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+
+<!-- Quick search overlay -->
+<div class="qs-overlay" id="qs-overlay">
+  <div class="qs-box">
+    <div class="qs-input-wrap">
+      <input type="text" id="qs-input" placeholder="Where would you like to go?" autocomplete="off">
+    </div>
+    <div class="qs-section-label">Projects</div>
+    <div class="qs-results" id="qs-results"></div>
+    <div class="qs-hint">
+      <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
+      <span><kbd>Enter</kbd> select</span>
+      <span><kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var activeProject = '{{.ActiveProject}}';
+  var activeDir = '{{.ActiveDir}}';
+  var sessionId = '{{.ActiveSessionID}}';
+  var isSessionRunning = {{if .ActiveSession}}('{{.ActiveSession.Status}}' === 'running' || '{{.ActiveSession.Status}}' === 'pending'){{else}}false{{end}};
+  var creatorEnabled = {{if .CreatorEnabled}}true{{else}}false{{end}};
+  var container = document.getElementById('conversation');
+  var ws = null;
+  var metaView = document.getElementById("meta-view");
+  var metaLink = document.getElementById("meta-link");
+  var viewMode = new URLSearchParams(window.location.search).get("view") || "";
+  if (viewMode === "meta" && metaView) {
+    container.style.display = "none";
+    metaView.style.display = "";
+    if (metaLink) metaLink.classList.add("active");
+    var promptBar = document.querySelector(".prompt-bar");
+    if (promptBar) promptBar.style.display = "none";
+  }
+
+  // Emoji maps
+  var toolEmojis = {
+    'read': '\u{1F4D6}', 'search': '\u{1F50D}', 'think': '\u{1F916}',
+    'execute': '\u26A1', 'edit': '\u270F\uFE0F', 'fetch': '\u{1F310}'
+  };
+  var statusEmojis = {
+    'pending': '\u23F3', 'in-progress': '\u{1F504}', 'completed': '\u2705', 'failed': '\u274C'
+  };
+  var planStatusEmojis = {
+    'pending': '\u23F3', 'in_progress': '\u{1F504}', 'completed': '\u2705'
+  };
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function renderText(text) {
+    var h = escapeHtml(text);
+    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+      return '<pre><code>' + code + '</code></pre>';
+    });
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    var lines = h.split('\n');
+    var result = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (line.indexOf('<pre>') !== -1) {
+        while (i < lines.length && lines[i].indexOf('</pre>') === -1) { result.push(lines[i]); i++; }
+        if (i < lines.length) { result.push(lines[i]); i++; }
+        continue;
+      }
+      var headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headerMatch) {
+        var level = headerMatch[1].length;
+        result.push('<h' + level + ' style="margin:0.5em 0 0.25em;font-size:' + (1.3 - level * 0.1) + 'em">' + headerMatch[2] + '</h' + level + '>');
+        i++; continue;
+      }
+      if (line.indexOf('|') !== -1 && i + 1 < lines.length && /^\|?\s*[-:]+[-|:\s]+$/.test(lines[i + 1])) {
+        var tableHtml = '<table style="border-collapse:collapse;margin:0.5em 0;font-size:0.9em">';
+        var headerCells = line.split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c !== ''; });
+        tableHtml += '<thead><tr>';
+        for (var c = 0; c < headerCells.length; c++) {
+          tableHtml += '<th style="border:1px solid #d6d3d1;padding:0.375em 0.75em;background:#f5f5f4;text-align:left">' + headerCells[c] + '</th>';
+        }
+        tableHtml += '</tr></thead><tbody>';
+        i += 2;
+        while (i < lines.length && lines[i].indexOf('|') !== -1) {
+          var cells = lines[i].split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c !== ''; });
+          tableHtml += '<tr>';
+          for (var c = 0; c < cells.length; c++) {
+            tableHtml += '<td style="border:1px solid #d6d3d1;padding:0.375em 0.75em">' + cells[c] + '</td>';
+          }
+          tableHtml += '</tr>'; i++;
+        }
+        tableHtml += '</tbody></table>';
+        result.push(tableHtml); continue;
+      }
+      result.push(line); i++;
+    }
+    return result.join('\n');
+  }
+
+  function formatToolUsage(tu) {
+    var header = '';
+    if (tu.input && tu.input.skill) {
+      header = '\u{1F3AF} skill: ' + escapeHtml(tu.input.skill);
+    } else {
+      var emoji = toolEmojis[tu.toolKind] || '';
+      if (emoji) header = emoji + ' ';
+      else if (tu.toolKind) header = escapeHtml(tu.toolKind) + ' ';
+      if (tu.title) header += escapeHtml(tu.title);
+    }
+    if (tu.status) {
+      var se = statusEmojis[tu.status];
+      header += ' ' + (se || '[' + escapeHtml(tu.status) + ']');
+    }
+    var params = '';
+    if (tu.input && !tu.title) {
+      var keys = Object.keys(tu.input).sort();
+      var parts = [];
+      for (var i = 0; i < keys.length; i++) {
+        var v = String(tu.input[keys[i]]);
+        if (v.length > 80) v = v.substring(0, 77) + '...';
+        parts.push('<code>' + escapeHtml(keys[i]) + '</code>: ' + escapeHtml(v));
+      }
+      if (parts.length) params = parts.join(' | ');
+    }
+    var linkOpen = '', linkClose = '';
+    if (tu.toolCallId) {
+      linkOpen = '<a href="/session/' + encodeURIComponent(sessionId) + '/tool/' + encodeURIComponent(tu.toolCallId) + '" style="text-decoration:none;color:inherit">';
+      linkClose = '</a>';
+    }
+    var html = linkOpen + '<div class="tool-usage"><div class="tool-header">' + header + '</div>';
+    if (params) html += '<div class="tool-params">' + params + '</div>';
+    html += '</div>' + linkClose;
+    return html;
+  }
+
+  function buildProgressBar(completed, total, width) {
+    if (total === 0) return '\u2591'.repeat(width);
+    var filled = Math.min(Math.floor((completed * width) / total), width);
+    return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
+  }
+
+  function formatPlan(plan) {
+    var entries = plan.entries || [];
+    var total = entries.length;
+    var completed = 0;
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].status === 'completed') completed++;
+    }
+    var bar = buildProgressBar(completed, total, 10);
+    var html = '<div class="plan-box"><div class="plan-header">\u{1F4CB} Plan (' + completed + '/' + total + ' completed) <span class="plan-bar">' + bar + '</span></div>';
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var emoji = planStatusEmojis[e.status] || '\u23F3';
+      html += '<div class="plan-entry">' + emoji + ' ' + escapeHtml(e.content) + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function extractInput(rawInput) {
+    if (!rawInput || typeof rawInput !== 'object') return {};
+    var result = {};
+    for (var k in rawInput) {
+      if (typeof rawInput[k] === 'string') result[k] = rawInput[k];
+    }
+    return result;
+  }
+
+  // --- Incremental rendering state ---
+  var assistantText = '';
+  var thoughtText = '';
+  var toolCalls = {};
+  var liveAssistantDiv = null;
+  var liveThoughtDiv = null;
+  var followMode = true;
+  var convArea = document.querySelector('.conversation-area');
+
+  function scrollToBottom() {
+    if (!followMode || !convArea) return;
+    convArea.scrollTop = convArea.scrollHeight;
+  }
+
+  if (convArea) {
+    convArea.addEventListener('scroll', function() {
+      followMode = (convArea.scrollTop + convArea.clientHeight) >= (convArea.scrollHeight - 50);
+    });
+  }
+
+  function flushAssistantIncremental() {
+    if (assistantText.trim()) {
+      if (!liveAssistantDiv) {
+        liveAssistantDiv = document.createElement('div');
+        liveAssistantDiv.className = 'msg msg-assistant';
+        liveAssistantDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-content"></div>';
+        container.appendChild(liveAssistantDiv);
+      }
+      liveAssistantDiv.querySelector('.msg-content').innerHTML = renderText(assistantText);
+    }
+  }
+
+  function flushThoughtIncremental() {
+    if (thoughtText.trim()) {
+      if (!liveThoughtDiv) {
+        liveThoughtDiv = document.createElement('div');
+        liveThoughtDiv.className = 'msg msg-thought';
+        liveThoughtDiv.innerHTML = '<div class="msg-label">Thought</div><div class="msg-content"></div>';
+        container.appendChild(liveThoughtDiv);
+      }
+      liveThoughtDiv.querySelector('.msg-content').innerHTML = renderText(thoughtText);
+    }
+  }
+
+  function closeAssistantBlock() { flushAssistantIncremental(); assistantText = ''; liveAssistantDiv = null; }
+  function closeThoughtBlock() { flushThoughtIncremental(); thoughtText = ''; liveThoughtDiv = null; }
+  function closeAllBlocks() { closeAssistantBlock(); closeThoughtBlock(); }
+
+  function appendEvent(ev) {
+    var p = ev.payload;
+    switch (ev.event_type) {
+      case 'prompt':
+        closeAllBlocks();
+        var div = document.createElement('div');
+        div.className = 'msg msg-user';
+        div.innerHTML = '<div class="msg-label">User \u{1F4AC}</div><div class="msg-content">' + renderText(p.prompt || '') + '</div>';
+        container.appendChild(div);
+        break;
+      case 'agent_message_chunk':
+        closeThoughtBlock();
+        if (p.content && p.content.type === 'text' && p.content.text) {
+          assistantText += p.content.text;
+          flushAssistantIncremental();
+        } else if (p.content && p.content.type === 'image' && p.content.data) {
+          closeAssistantBlock();
+          var imgDiv = document.createElement('div');
+          imgDiv.className = 'msg msg-assistant';
+          var mime = escapeHtml(p.content.mimeType || 'image/png');
+          imgDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-content"><img src="data:' + mime + ';base64,' + p.content.data + '" style="max-width:100%;border-radius:6px" alt="Agent image"></div>';
+          container.appendChild(imgDiv);
+        }
+        break;
+      case 'agent_thought_chunk':
+        closeAssistantBlock();
+        if (p.content && p.content.type === 'text' && p.content.text) {
+          thoughtText += p.content.text;
+          flushThoughtIncremental();
+        }
+        break;
+      case 'tool_call':
+      case 'tool_call_update':
+        closeAllBlocks();
+        var existing = (p.toolCallId && toolCalls[p.toolCallId]) || { toolKind: '', title: '', input: {}, status: '', toolCallId: '' };
+        if (p.kind) existing.toolKind = p.kind;
+        if (p.title) existing.title = p.title;
+        if (p.status) existing.status = p.status;
+        if (p.toolCallId) existing.toolCallId = p.toolCallId;
+        if (p.rawInput) {
+          var inp = extractInput(p.rawInput);
+          for (var k in inp) existing.input[k] = inp[k];
+        }
+        if (p.toolCallId) toolCalls[p.toolCallId] = existing;
+        var toolHtml = formatToolUsage(existing);
+        var existingEl = p.toolCallId && document.getElementById('tool-' + p.toolCallId);
+        if (existingEl) {
+          existingEl.outerHTML = toolHtml.replace('<div class="tool-usage"', '<div class="tool-usage" id="tool-' + escapeHtml(p.toolCallId) + '"');
+        } else {
+          if (p.toolCallId) toolHtml = toolHtml.replace('<div class="tool-usage"', '<div class="tool-usage" id="tool-' + escapeHtml(p.toolCallId) + '"');
+          container.insertAdjacentHTML('beforeend', toolHtml);
+        }
+        break;
+      case 'plan':
+        closeAllBlocks();
+        if (p.entries) container.insertAdjacentHTML('beforeend', formatPlan(p));
+        break;
+      case 'prompt_finished':
+        closeAllBlocks();
+        var hr = document.createElement('hr');
+        hr.className = 'prompt-separator';
+        container.appendChild(hr);
+        break;
+    }
+  }
+
+  function switchSession(newId) {
+    window.location.href = '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(newId);
+  }
+
+  var sessionSelect = document.getElementById('session-select');
+  if (sessionSelect) {
+    sessionSelect.addEventListener('change', function() { switchSession(this.value); });
+  }
+
+  // Load session events
+  if (sessionId && container && viewMode !== "meta") {
+    fetch('/session/' + encodeURIComponent(sessionId) + '/events')
+      .then(function(r) { return r.json(); })
+      .then(function(events) {
+        container.innerHTML = '';
+        for (var i = 0; i < events.length; i++) {
+          appendEvent(events[i]);
+        }
+        closeAllBlocks();
+        if (container.children.length === 0) {
+          container.innerHTML = '<p class="loading">No events recorded.</p>';
+        }
+        if (convArea) convArea.scrollTop = convArea.scrollHeight;
+        if (isSessionRunning) connectWebSocket();
+      })
+      .catch(function(err) {
+        container.innerHTML = '<p style="color:#991b1b">Failed to load events: ' + escapeHtml(err.message) + '</p>';
+      });
+  }
+
+  function connectWebSocket() {
+    var proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+    var wsUrl = proto + '//' + location.host + '/session/' + encodeURIComponent(sessionId) + '/ws';
+    ws = new WebSocket(wsUrl);
+    ws.onmessage = function(e) {
+      var ev;
+      try { ev = JSON.parse(e.data); } catch(err) { return; }
+      var placeholder = container.querySelector('.loading');
+      if (placeholder) placeholder.remove();
+      appendEvent(ev);
+      scrollToBottom();
+    };
+    ws.onclose = function() { closeAllBlocks(); };
+  }
+
+  // Prompt sending
+  var input = document.getElementById('prompt-input');
+  var btn = document.getElementById('prompt-send');
+  if (input && btn) {
+    var sending = false;
+    function autoResize() {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    }
+
+    function sendPrompt() {
+      var text = input.value.trim();
+      if (!text || sending) return;
+
+      // If we have a running session, send prompt to it
+      if (sessionId && isSessionRunning) {
+        sending = true;
+        btn.disabled = true;
+        input.disabled = true;
+        btn.textContent = 'Sending...';
+        fetch('/session/' + encodeURIComponent(sessionId) + '/prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text })
+        }).then(function(r) {
+          return r.json().then(function(j) {
+            if (!r.ok) throw new Error(j.error || 'Failed');
+            return j;
+          });
+        }).then(function(data) {
+          input.value = '';
+          autoResize();
+          if (data.status === 'command') {
+            // Display command response in conversation
+            closeAllBlocks();
+            var div = document.createElement('div');
+            div.className = 'msg msg-assistant';
+            div.innerHTML = '<div class="msg-label">System</div><div class="msg-content">' + escapeHtml(data.message || '') + '</div>';
+            container.appendChild(div);
+            scrollToBottom();
+
+            // If /clear returned a new session, switch to it
+            if (data.new_session_id) {
+              var oldId = sessionId;
+              sessionId = data.new_session_id;
+
+              // Reset rendering state
+              assistantText = '';
+              thoughtText = '';
+              toolCalls = {};
+              liveAssistantDiv = null;
+              liveThoughtDiv = null;
+              container.innerHTML = '';
+
+              // Update URL
+              history.pushState(null, '', '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(sessionId));
+
+              // Update session selector
+              if (sessionSelect) {
+                var opt = document.createElement('option');
+                opt.value = sessionId;
+                opt.textContent = 'New session \u2014 running';
+                opt.selected = true;
+                sessionSelect.insertBefore(opt, sessionSelect.firstChild);
+              }
+
+              // Reconnect WebSocket to the new session
+              if (ws) { ws.onclose = null; ws.close(); ws = null; }
+              connectWebSocket();
+            }
+          }
+        }).catch(function(err) {
+          alert('Failed to send prompt: ' + err.message);
+        }).finally(function() {
+          sending = false;
+          btn.disabled = false;
+          input.disabled = false;
+          btn.textContent = 'Send';
+          input.focus();
+        });
+      } else if (creatorEnabled && activeDir) {
+        // Create a new session in-place (no page reload)
+        sending = true;
+        btn.disabled = true;
+        input.disabled = true;
+        btn.textContent = 'Creating...';
+        var promptText = text;
+        fetch('/projects/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir: activeDir })
+        }).then(function(r) {
+          if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
+          return r.json();
+        }).then(function(data) {
+          // Switch to the new session in-place
+          sessionId = data.id;
+          isSessionRunning = true;
+
+          // Reset rendering state
+          assistantText = '';
+          thoughtText = '';
+          toolCalls = {};
+          liveAssistantDiv = null;
+          liveThoughtDiv = null;
+
+          // Clear conversation - the prompt will arrive via WebSocket
+          container.innerHTML = '';
+
+          // Update URL without reload
+          history.pushState(null, '', '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(sessionId));
+
+          // Update session bar
+          var statusEl = document.querySelector('.session-bar .session-status');
+          if (statusEl) {
+            statusEl.className = 'session-status status-running';
+            statusEl.textContent = 'running';
+          }
+          var fullViewLink = document.querySelector('.session-bar .session-link');
+          if (fullViewLink) fullViewLink.href = '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(sessionId) + '&view=meta';
+
+          // Add new session to the selector
+          if (sessionSelect) {
+            var opt = document.createElement('option');
+            opt.value = sessionId;
+            opt.textContent = 'New session \u2014 running';
+            opt.selected = true;
+            sessionSelect.insertBefore(opt, sessionSelect.firstChild);
+          }
+
+          // Connect WebSocket for live events, then send the prompt
+          if (ws) { ws.onclose = null; ws.close(); ws = null; }
+          connectWebSocket();
+
+          input.value = '';
+          autoResize();
+          btn.textContent = 'Send';
+
+          return fetch('/session/' + encodeURIComponent(sessionId) + '/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: promptText })
+          });
+        }).then(function(r) {
+          if (r && !r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed to send prompt'); });
+        }).catch(function(err) {
+          alert('Failed to create session: ' + err.message);
+        }).finally(function() {
+          sending = false;
+          btn.disabled = false;
+          input.disabled = false;
+          if (btn.textContent !== 'Send') btn.textContent = 'Send';
+          input.focus();
+        });
+      }
+    }
+
+    btn.addEventListener('click', sendPrompt);
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+    });
+    input.addEventListener('input', autoResize);
+  }
+
+  // --- Quick search (Ctrl+K) ---
+  var qsProjects = [
+    {{range .Projects}}
+    { name: '{{.Name}}', dir: '{{.Dir}}', running: {{if .HasRunning}}true{{else}}false{{end}} },
+    {{end}}
+  ];
+  var qsOverlay = document.getElementById('qs-overlay');
+  var qsInput = document.getElementById('qs-input');
+  var qsResults = document.getElementById('qs-results');
+  var qsActiveIdx = 0;
+
+  function qsOpen() {
+    qsOverlay.classList.add('open');
+    qsInput.value = '';
+    qsActiveIdx = 0;
+    qsRender(qsProjects);
+    qsInput.focus();
+  }
+
+  function qsClose() {
+    qsOverlay.classList.remove('open');
+  }
+
+  function qsRender(items) {
+    qsResults.innerHTML = '';
+    if (items.length === 0) {
+      qsResults.innerHTML = '<div class="qs-empty">No matching projects</div>';
+      return;
+    }
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var div = document.createElement('div');
+      div.className = 'qs-item' + (i === qsActiveIdx ? ' qs-active' : '');
+      div.setAttribute('data-project', it.name);
+      var html = '<span class="qs-hash">#</span><span class="qs-name">' + escapeHtml(it.name) + '</span>';
+      if (it.running) html += '<span class="qs-running" title="Running"></span>';
+      div.innerHTML = html;
+      div.addEventListener('click', (function(name) {
+        return function() { window.location.href = '/projects?project=' + encodeURIComponent(name); };
+      })(it.name));
+      qsResults.appendChild(div);
+    }
+  }
+
+  function qsFiltered() {
+    var q = qsInput.value.toLowerCase();
+    if (!q) return qsProjects;
+    return qsProjects.filter(function(p) { return p.name.toLowerCase().indexOf(q) !== -1; });
+  }
+
+  function qsUpdateActive(items) {
+    var children = qsResults.querySelectorAll('.qs-item');
+    for (var i = 0; i < children.length; i++) {
+      children[i].classList.toggle('qs-active', i === qsActiveIdx);
+    }
+    if (children[qsActiveIdx]) {
+      children[qsActiveIdx].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  if (qsInput) {
+    qsInput.addEventListener('input', function() {
+      qsActiveIdx = 0;
+      qsRender(qsFiltered());
+    });
+
+    qsInput.addEventListener('keydown', function(e) {
+      var items = qsFiltered();
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (qsActiveIdx < items.length - 1) { qsActiveIdx++; qsUpdateActive(items); }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (qsActiveIdx > 0) { qsActiveIdx--; qsUpdateActive(items); }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (items[qsActiveIdx]) {
+          window.location.href = '/projects?project=' + encodeURIComponent(items[qsActiveIdx].name);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        qsClose();
+      }
+    });
+  }
+
+  if (qsOverlay) {
+    qsOverlay.addEventListener('click', function(e) {
+      if (e.target === qsOverlay) qsClose();
+    });
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      if (qsOverlay.classList.contains('open')) qsClose();
+      else qsOpen();
+    }
+    if (e.key === 'Escape' && qsOverlay.classList.contains('open')) {
+      qsClose();
+    }
+  });
+})();
+</script>
+</body>
+</html>

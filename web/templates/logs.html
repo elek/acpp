@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logs - Session {{.Session.ID}}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  main { max-width: none; margin: 0 auto; padding: 1.5em 2em 2em; }
+
+  .sub-nav { display: flex; gap: 0.5em; align-items: center; margin-bottom: 1.5em; }
+  .sub-nav .back { color: #78716c; font-size: 0.8125em; text-decoration: none; }
+  .sub-nav .back:hover { color: #1c1917; }
+  .sub-nav .sep { color: #d6d3d1; margin: 0 0.375em; }
+  .tab { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .tab:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .tab.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  h1 { font-size: 1.5em; font-weight: 700; color: #1c1917; letter-spacing: -0.025em; margin: 0 0 0.25em; }
+  .event-count { color: #78716c; font-size: 0.875em; margin: 0 0 1.25em; }
+
+  .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e7e5e4; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th { padding: 0.625em 1em; text-align: left; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; background: #fafaf9; border-bottom: 1px solid #e7e5e4; }
+  td { padding: 0.625em 1em; font-size: 0.8125em; color: #1c1917; border-bottom: 1px solid #f5f5f4; vertical-align: top; }
+  tr:hover td { background: #f5f5f4; }
+  tr:last-child td { border-bottom: none; }
+
+  .event-type { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; color: #78716c; background: #f5f5f4; padding: 0.15em 0.5em; border-radius: 4px; display: inline-block; }
+  .timestamp { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; color: #78716c; white-space: nowrap; }
+  .payload { max-width: 55em; overflow-x: auto; white-space: pre-wrap; word-break: break-all; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; line-height: 1.5; max-height: 14em; overflow-y: auto; background: #fafaf9; padding: 0.5em; border-radius: 4px; border: 1px solid #e7e5e4; }
+  .empty-state { text-align: center; padding: 3em 1em; color: #78716c; font-style: italic; }
+
+  @media (max-width: 768px) {
+    header { padding: 0 1em; }
+    main { padding: 1em 1em 1.5em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Projects</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="sub-nav">
+  <a href="/" class="back">&larr; All sessions</a>
+  <span class="sep">|</span>
+  <a href="/session/{{.Session.ID}}" class="tab">Full</a>
+  <a href="/session/{{.Session.ID}}?view=summary" class="tab">Summary</a>
+  <a href="/session/{{.Session.ID}}/logs" class="tab active">Raw Logs</a>
+</div>
+<h1>Raw Logs</h1>
+<p class="event-count">{{len .Logs}} events</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Type</th>
+      <th>Payload</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Logs}}
+    <tr>
+      <td class="timestamp">{{.CreatedAt.Format "15:04:05.000"}}</td>
+      <td><span class="event-type">{{.EventType}}</span></td>
+      <td><div class="payload">{{bytesToString .Payload}}</div></td>
+    </tr>
+    {{else}}
+    <tr><td colspan="3" class="empty-state">No events recorded.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+</main>
+</body>
+</html>

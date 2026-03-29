@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACPP Compare — {{.Commit}}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  main { max-width: none; margin: 0 auto; padding: 1.5em 2em 2em; }
+  h1 { font-size: 1.5em; font-weight: 700; color: #1c1917; letter-spacing: -0.025em; margin: 0 0 0.25em; }
+  .subtitle { color: #78716c; font-size: 0.875em; margin: 0 0 1.5em; }
+
+  .session-card { background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 1.25em 1.5em; margin-bottom: 1em; }
+  .session-header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em; margin-bottom: 0.75em; }
+  .session-title { font-size: 1em; font-weight: 700; color: #1c1917; }
+  .session-meta { font-size: 0.75em; color: #78716c; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.75em; margin-bottom: 1em; }
+  .stat-item { background: #fafaf9; border: 1px solid #f5f5f4; border-radius: 6px; padding: 0.625em 0.75em; }
+  .stat-label { font-size: 0.6875em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; }
+  .stat-value { font-size: 1.125em; font-weight: 700; margin-top: 0.125em; color: #1c1917; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .stat-value.accent { color: #2563eb; }
+
+  .prompts-section { margin-top: 0.75em; }
+  .prompts-label { font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; margin-bottom: 0.375em; }
+  .prompt-item { background: #fafaf9; border: 1px solid #f5f5f4; border-radius: 6px; padding: 0.5em 0.75em; margin-bottom: 0.375em; font-size: 0.8125em; color: #1c1917; white-space: pre-wrap; word-break: break-word; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+
+  .status { display: inline-block; padding: 0.2em 0.625em; border-radius: 9999px; font-size: 0.75em; font-weight: 600; letter-spacing: 0.01em; }
+  .status-running { background: #dcfce7; color: #166534; }
+  .status-complete { background: #dbeafe; color: #1e40af; }
+  .status-error { background: #fee2e2; color: #991b1b; }
+  .status-pending { background: #fef9c3; color: #854d0e; }
+
+  .empty-state { text-align: center; padding: 3em 1em; color: #78716c; font-style: italic; }
+
+  @media (max-width: 768px) {
+    header { padding: 0 1em; }
+    main { padding: 1em 1em 1.5em; }
+    .stats-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Projects</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<main>
+<h1>Compare: <code>{{.Commit}}</code></h1>
+<p class="subtitle">{{len .Items}} session{{if ne (len .Items) 1}}s{{end}} for this commit</p>
+
+{{if .Items}}
+{{range .Items}}
+<div class="session-card">
+  <div class="session-header">
+    <div>
+      <span class="session-title"><a href="/session/{{.Session.ID}}?view=summary">{{basename .Session.Dir}}</a></span>
+      <span class="session-meta">{{.Session.Agent}} &middot; {{.Session.Model}}</span>
+    </div>
+    <div>
+      <span class="status status-{{.Session.Status}}">&#x2022; {{.Session.Status}}</span>
+      <span class="session-meta">{{.Session.CreatedAt.Format "2006-01-02 15:04"}}</span>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-item">
+      <div class="stat-label">Cost</div>
+      <div class="stat-value accent">${{printf "%.4f" .Session.CostUSD}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Input Tokens</div>
+      <div class="stat-value">{{millions .Session.InputTokens}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Output Tokens</div>
+      <div class="stat-value">{{millions .Session.OutputTokens}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Cache Write</div>
+      <div class="stat-value">{{millions .Session.CacheCreationInputTokens}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Cache Read</div>
+      <div class="stat-value">{{millions .Session.CacheReadInputTokens}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Prompts</div>
+      <div class="stat-value">{{.Session.PromptCount}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Duration</div>
+      <div class="stat-value">{{formatDurationMs .Session.PromptDurationMs}}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Tok/sec</div>
+      <div class="stat-value">{{if and (gt .Session.OutputTokens 0) (gt .Session.PromptDurationMs 0)}}{{printf "%.1f" (divf (itof .Session.OutputTokens) (divf (itof .Session.PromptDurationMs) 1000.0))}}{{else}}-{{end}}</div>
+    </div>
+  </div>
+
+  {{if .Prompts}}
+  <div class="prompts-section">
+    <div class="prompts-label">Prompts</div>
+    {{range .Prompts}}
+    <div class="prompt-item">{{.}}</div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No sessions found for commit <code>{{.Commit}}</code>.</div>
+{{end}}
+</main>
+</body>
+</html>

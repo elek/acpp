@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACPP Model Stats</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  main { max-width: none; margin: 0 auto; padding: 1.5em 2em 2em; }
+  h1 { font-size: 1.5em; font-weight: 700; color: #1c1917; letter-spacing: -0.025em; margin: 0 0 0.25em; }
+  .subtitle { color: #78716c; font-size: 0.875em; margin: 0 0 1.5em; }
+
+  .summary-cards { display: flex; gap: 1em; margin-bottom: 1.5em; flex-wrap: wrap; }
+  .summary-card { background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 1em 1.5em; flex: 1; min-width: 140px; }
+  .summary-label { font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; }
+  .summary-value { font-size: 1.5em; font-weight: 700; margin-top: 0.25em; color: #1c1917; }
+  .summary-value.accent { color: #2563eb; }
+
+  .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e7e5e4; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th { padding: 0.625em 1em; text-align: right; font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #78716c; background: #fafaf9; border-bottom: 1px solid #e7e5e4; }
+  th:first-child, th:nth-child(2) { text-align: left; }
+  td { padding: 0.625em 1em; font-size: 0.8125em; color: #1c1917; border-bottom: 1px solid #f5f5f4; text-align: right; }
+  td:first-child, td:nth-child(2) { text-align: left; }
+  tr:hover td { background: #f5f5f4; }
+  tr:last-child td { border-bottom: none; }
+
+  .mono { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; font-variant-numeric: tabular-nums; }
+  .dim { color: #d6d3d1; }
+  .totals td { font-weight: 700; border-top: 2px solid #d6d3d1; background: #fafaf9; }
+  .totals:hover td { background: #fafaf9; }
+  .cost { color: #2563eb; font-weight: 600; }
+
+  .sub-nav { display: flex; gap: 0.25em; margin-bottom: 1.5em; }
+  .tab { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .tab:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .tab.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  @media (max-width: 768px) {
+    header { padding: 0 1em; }
+    main { padding: 1em 1em 1.5em; }
+    .summary-cards { gap: 0.75em; }
+    .summary-card { min-width: 100px; padding: 0.75em 1em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Projects</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="sub-nav">
+  <a href="/stats" class="tab{{if eq .StatsView "daily"}} active{{end}}">Daily</a>
+  <a href="/stats/projects" class="tab{{if eq .StatsView "projects"}} active{{end}}">Projects</a>
+  <a href="/stats/models" class="tab{{if eq .StatsView "models"}} active{{end}}">Models</a>
+  <a href="/stats/insights" class="tab{{if eq .StatsView "insights"}} active{{end}}">Insights</a>
+</div>
+<div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em;">
+  <div>
+    <h1>Model Usage</h1>
+    <p class="subtitle">By agent and model since {{.Since}}</p>
+  </div>
+  <form method="get" action="/stats/models" style="display: flex; align-items: center; gap: 0.5em;">
+    <label for="since" style="font-size: 0.8125em; font-weight: 500; color: #78716c;">Since</label>
+    <input type="date" id="since" name="since" value="{{.Since}}" style="font-size: 0.8125em; padding: 0.375em 0.5em; border: 1px solid #d6d3d1; border-radius: 6px; background: #fff;">
+    <button type="submit" style="font-size: 0.8125em; padding: 0.375em 0.75em; border: 1px solid #d6d3d1; border-radius: 6px; background: #fff; cursor: pointer; font-weight: 500; color: #1c1917;">Apply</button>
+  </form>
+</div>
+
+<div class="summary-cards">
+  <div class="summary-card">
+    <div class="summary-label">Total Cost</div>
+    <div class="summary-value accent">${{printf "%.2f" .Totals.CostUSD}}</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Sessions</div>
+    <div class="summary-value">{{.Totals.Sessions}}</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Prompts</div>
+    <div class="summary-value">{{.Totals.PromptCount}}</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Output Tokens</div>
+    <div class="summary-value">{{millions .Totals.OutputTokens}}</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Prompt Time</div>
+    <div class="summary-value">{{formatDurationMs .Totals.PromptDurationMs}}</div>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>Model</th>
+      <th>Sessions</th>
+      <th>Prompts</th>
+      <th>Input</th>
+      <th>Output</th>
+      <th>Cache Write</th>
+      <th>Cache Read</th>
+      <th>Prompt Time</th>
+      <th>Out Speed</th>
+      <th>Ops Speed</th>
+      <th>Cost</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Stats}}
+    <tr>
+      <td>{{.Agent}}</td>
+      <td>{{.Model}}</td>
+      <td class="mono">{{.Sessions}}</td>
+      <td class="mono">{{.PromptCount}}</td>
+      <td class="mono">{{millions .InputTokens}}</td>
+      <td class="mono">{{millions .OutputTokens}}</td>
+      <td class="mono{{if eq .CacheCreationInputTokens 0}} dim{{end}}">{{millions .CacheCreationInputTokens}}</td>
+      <td class="mono{{if eq .CacheReadInputTokens 0}} dim{{end}}">{{millions .CacheReadInputTokens}}</td>
+      <td class="mono">{{formatDurationMs .PromptDurationMs}}</td>
+      <td class="mono">{{if gt .PromptDurationMs 0}}{{printf "%.0f" (divf (itof .OutputTokens) (divf (itof .PromptDurationMs) 1000.0))}} t/s{{else}}-{{end}}</td>
+      <td class="mono">{{if gt .PromptDurationMs 0}}{{printf "%.0f" (divf (addf (itof .InputTokens) (addf (itof .CacheCreationInputTokens) (addf (itof .CacheReadInputTokens) (itof .OutputTokens)))) (divf (itof .PromptDurationMs) 1000.0))}} t/s{{else}}-{{end}}</td>
+      <td class="mono cost">${{printf "%.2f" .CostUSD}}</td>
+    </tr>
+    {{end}}
+    {{if .Stats}}
+    <tr class="totals">
+      <td>Total</td>
+      <td></td>
+      <td class="mono">{{.Totals.Sessions}}</td>
+      <td class="mono">{{.Totals.PromptCount}}</td>
+      <td class="mono">{{millions .Totals.InputTokens}}</td>
+      <td class="mono">{{millions .Totals.OutputTokens}}</td>
+      <td class="mono">{{millions .Totals.CacheCreationInputTokens}}</td>
+      <td class="mono">{{millions .Totals.CacheReadInputTokens}}</td>
+      <td class="mono">{{formatDurationMs .Totals.PromptDurationMs}}</td>
+      <td class="mono">{{if gt .Totals.PromptDurationMs 0}}{{printf "%.0f" (divf (itof .Totals.OutputTokens) (divf (itof .Totals.PromptDurationMs) 1000.0))}} t/s{{else}}-{{end}}</td>
+      <td class="mono">{{if gt .Totals.PromptDurationMs 0}}{{printf "%.0f" (divf (addf (itof .Totals.InputTokens) (addf (itof .Totals.CacheCreationInputTokens) (addf (itof .Totals.CacheReadInputTokens) (itof .Totals.OutputTokens)))) (divf (itof .Totals.PromptDurationMs) 1000.0))}} t/s{{else}}-{{end}}</td>
+      <td class="mono cost">${{printf "%.2f" .Totals.CostUSD}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+</main>
+</body>
+</html>
