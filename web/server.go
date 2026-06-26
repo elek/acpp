@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log/slog"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/elek/acpp/db"
+	"github.com/elek/acpp/router"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -43,36 +42,23 @@ type SessionCloser interface {
 	CloseSession(sessionID string)
 }
 
-// PromptSender can send a prompt to a running session by ID.
-type PromptSender interface {
-	SendPromptBySessionID(sessionID string, message string) error
-}
-
 // SessionCreator can create a new session and return its ID.
 type SessionCreator interface {
-	StartSessionWeb(dir string, agent string, sandbox string, projectName string) (string, error)
-}
-
-// CommandHandler can handle slash commands for web sessions.
-// HandleCommandBySessionID returns a message to display and optionally a new
-// session ID (when the command creates a replacement session, e.g. /clear).
-type CommandHandler interface {
-	HandleCommandBySessionID(sessionID string, command string) (message string, newSessionID string, err error)
+	StartSessionWeb(dir string, agent string, sandbox string, sandboxProfiles string, projectName string) (string, error)
 }
 
 // Server is the web UI server.
 type Server struct {
-	store    db.SessionReader
-	closer   SessionCloser
-	prompter PromptSender
-	creator  SessionCreator
-	commands CommandHandler
-	projects db.ProjectStore
-	defaults SessionDefaults
-	echo     *echo.Echo
-	addr     string
-	hub      *Hub
-	upgrader websocket.Upgrader
+	store      db.SessionReader
+	closer     SessionCloser
+	creator    SessionCreator
+	projects   db.ProjectStore
+	defaults   SessionDefaults
+	echo       *echo.Echo
+	addr       string
+	hub        *Hub
+	webChannel *WebChannel
+	upgrader   websocket.Upgrader
 }
 
 // SessionDefaults holds default values shown in the new-session form.
@@ -91,8 +77,8 @@ func New(store db.SessionReader, addr string) *Server {
 
 	t, _ := template.New("").Funcs(template.FuncMap{
 		"bytesToString": func(b []byte) string { return string(b) },
-		"basename": func(path string) string { return filepath.Base(path) },
-		"plusOne": func(i int) int { return i + 1 },
+		"basename":      func(path string) string { return filepath.Base(path) },
+		"plusOne":       func(i int) int { return i + 1 },
 		"formatDurationMs": func(ms int64) string {
 			if ms == 0 {
 				return "-"
@@ -136,11 +122,12 @@ func New(store db.SessionReader, addr string) *Server {
 	}).ParseFS(templateFS, "templates/*.html")
 	e.Renderer = &tmplRenderer{templates: t}
 
+	hub := NewHub()
 	s := &Server{
 		store: store,
 		echo:  e,
 		addr:  addr,
-		hub:   NewHub(),
+		hub:   hub,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -165,27 +152,33 @@ func New(store db.SessionReader, addr string) *Server {
 	return s
 }
 
+// WithRouter wires the web UI to a router for live sessions. It creates a
+// WebChannel subscriber (which streams every conversation's updates to connected
+// browsers) and registers it as both the session creator and closer. Persistence
+// is wired separately via the persistence package. Returns the server for
+// chaining.
+func (s *Server) WithRouter(rt *router.Router) *Server {
+	s.webChannel = NewWebChannel(rt, s.hub)
+	s.creator = s.webChannel
+	s.closer = s.webChannel
+	return s
+}
+
+// WebChannel returns the router-backed channel used for live sessions, or nil if
+// WithRouter was not called.
+func (s *Server) WebChannel() *WebChannel {
+	return s.webChannel
+}
+
 // WithCloser sets a SessionCloser that allows the web UI to stop running sessions.
 func (s *Server) WithCloser(closer SessionCloser) *Server {
 	s.closer = closer
 	return s
 }
 
-// WithPrompter sets a PromptSender that allows the web UI to send prompts to running sessions.
-func (s *Server) WithPrompter(prompter PromptSender) *Server {
-	s.prompter = prompter
-	return s
-}
-
 // WithCreator sets a SessionCreator that allows the web UI to create new sessions.
 func (s *Server) WithCreator(creator SessionCreator) *Server {
 	s.creator = creator
-	return s
-}
-
-// WithCommands sets a CommandHandler for handling slash commands in web sessions.
-func (s *Server) WithCommands(commands CommandHandler) *Server {
-	s.commands = commands
 	return s
 }
 
@@ -232,9 +225,10 @@ func (s *Server) createSession(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session creation not available"})
 	}
 	var body struct {
-		Dir     string `json:"dir"`
-		Agent   string `json:"agent"`
-		Sandbox string `json:"sandbox"`
+		Dir             string `json:"dir"`
+		Agent           string `json:"agent"`
+		Sandbox         string `json:"sandbox"`
+		SandboxProfiles string `json:"sandbox_profiles"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -249,7 +243,7 @@ func (s *Server) createSession(c echo.Context) error {
 	if projectName == "" || projectName == "." || projectName == "/" {
 		projectName = "default"
 	}
-	sessionID, err := s.creator.StartSessionWeb(body.Dir, body.Agent, body.Sandbox, projectName)
+	sessionID, err := s.creator.StartSessionWeb(body.Dir, body.Agent, body.Sandbox, body.SandboxProfiles, projectName)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -340,13 +334,7 @@ func (s *Server) stopSession(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/session/"+id)
 }
 
-// webCommands lists the slash commands supported in web sessions.
-var webCommands = []string{"/status", "/clear", "/cancel", "/stop"}
-
 func (s *Server) sendPrompt(c echo.Context) error {
-	if s.prompter == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "prompt sending not available"})
-	}
 	id := c.Param("id")
 	var body struct {
 		Prompt string `json:"prompt"`
@@ -357,40 +345,15 @@ func (s *Server) sendPrompt(c echo.Context) error {
 	if body.Prompt == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "prompt is required"})
 	}
-
-	// Check if the prompt is a slash command.
-	if s.commands != nil && isWebCommand(body.Prompt) {
-		msg, newSessionID, err := s.commands.HandleCommandBySessionID(id, body.Prompt)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		resp := map[string]string{"status": "command", "message": msg}
-		if newSessionID != "" {
-			resp["new_session_id"] = newSessionID
-		}
-		return c.JSON(http.StatusOK, resp)
+	if s.webChannel == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "live sessions not available"})
 	}
-
-	// Send prompt in background so the HTTP response returns immediately.
-	// The client sees updates via the WebSocket.
-	go func() {
-		if err := s.prompter.SendPromptBySessionID(id, body.Prompt); err != nil {
-			slog.Error("prompt error", "session", id, "err", err)
-		}
-	}()
-
+	// Leading-slash messages (e.g. /clear, /cancel) are recognised as commands
+	// by the router itself, so the prompt is forwarded verbatim.
+	if err := s.webChannel.SubmitPrompt(id, body.Prompt); err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "accepted"})
-}
-
-// isWebCommand returns true if the message matches a supported web slash command.
-func isWebCommand(message string) bool {
-	trimmed := strings.TrimSpace(message)
-	for _, cmd := range webCommands {
-		if trimmed == cmd {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Server) viewCompare(c echo.Context) error {
@@ -418,14 +381,6 @@ func (s *Server) viewCompare(c echo.Context) error {
 		"Commit":      commit,
 		"Items":       items,
 		"CurrentPage": "sessions",
-	})
-}
-
-// PublishEvent sends a log event to all WebSocket subscribers for the given session.
-func (s *Server) PublishEvent(sessionID, eventType string, payload json.RawMessage) {
-	s.hub.Publish(sessionID, logEntry{
-		EventType: eventType,
-		Payload:   payload,
 	})
 }
 

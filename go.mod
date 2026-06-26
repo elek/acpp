@@ -2,10 +2,7 @@ module github.com/elek/acpp
 
 go 1.25.6
 
-require (
-	github.com/alecthomas/kong v1.13.0
-	github.com/coder/acp-go-sdk v0.6.3
-)
+require github.com/alecthomas/kong v1.13.0
 
 require (
 	github.com/google/uuid v1.6.0
@@ -19,6 +16,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.0
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/prometheus/client_golang v1.23.2
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.40.0
@@ -69,5 +67,3 @@ require (
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/coder/acp-go-sdk => github.com/agentcooper/acp-go-sdk v0.0.0-20260130133646-65ae55c285fb

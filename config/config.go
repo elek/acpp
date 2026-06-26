@@ -17,6 +17,8 @@ const (
 	ToolPermissionDeny ToolPermissionAction = "deny"
 	// ToolPermissionAsk prompts the user for approval before allowing.
 	ToolPermissionAsk ToolPermissionAction = "ask"
+
+	ToolPermissionApprove ToolPermissionAction = "approve"
 )
 
 // ToolPermissionRule defines a single permission rule for tool calls.
@@ -47,17 +49,29 @@ type DatabaseConfig struct {
 	DSN string `yaml:"dsn"`
 }
 
+// DesktopConfig holds desktop application settings.
+type DesktopConfig struct {
+	Zoom float64 `yaml:"zoom,omitempty"`
+}
+
 // Config holds application configuration
 type Config struct {
-	Database        DatabaseConfig       `yaml:"database"`
-	DiscordToken    string               `yaml:"discord_token"`
-	WebAddr         string               `yaml:"web_addr"`
-	SandboxDir      string               `yaml:"sandbox_dir"`
-	Defaults        Defaults             `yaml:"defaults"`
-	AgentPath       []string             `yaml:"agent_path"`
-	SearchPath      []string             `yaml:"search_path"`
-	ToolPermissions []ToolPermissionRule `yaml:"tool_permissions"`
-	OTLP            OTLPConfig           `yaml:"otlp"`
+	Database        DatabaseConfig  `yaml:"database"`
+	DiscordToken    string          `yaml:"discord_token"`
+	WebAddr         string          `yaml:"web_addr"`
+	SandboxDir      string          `yaml:"sandbox_dir"`
+	Defaults        Defaults        `yaml:"defaults"`
+	AgentPath       []string        `yaml:"agent_path"`
+	SearchPath      []string        `yaml:"search_path"`
+	ToolPermissions ToolPermissions `yaml:"tool_permissions"`
+	ScheduledJobs   []ScheduledJob  `yaml:"scheduled_jobs"`
+	OTLP            OTLPConfig      `yaml:"otlp"`
+	Desktop         DesktopConfig   `yaml:"desktop,omitempty"`
+}
+
+type ToolPermissions struct {
+	Rules   []ToolPermissionRule `yaml:"rules"`
+	Default ToolPermissionAction `yaml:"default"`
 }
 
 // Defaults holds default values for session creation
@@ -67,12 +81,27 @@ type Defaults struct {
 	EnvWhitelist []string `yaml:"env_whitelist"`
 }
 
+// ScheduledJob defines a cron-triggered prompt execution.
+type ScheduledJob struct {
+	Name            string   `yaml:"name"`
+	Prompt          string   `yaml:"prompt"`
+	Schedule        string   `yaml:"schedule"`
+	Dir             string   `yaml:"dir"`
+	Agent           string   `yaml:"agent,omitempty"`
+	Sandbox         string   `yaml:"sandbox,omitempty"`
+	SandboxProfiles string   `yaml:"sandbox_profiles,omitempty"`
+	Permission      string   `yaml:"permission,omitempty"`
+	Hooks           string   `yaml:"hooks,omitempty"`
+	Env             []string `yaml:"env,omitempty"`
+	ReuseSession    bool     `yaml:"reuse_session,omitempty"`
+}
+
 // MatchToolPermission finds the first matching permission rule for the given tool title and input.
 // Returns the matching rule's action, or empty string if no rule matches (auto-approve).
 // Title and input values are matched case-insensitively using filepath.Match glob patterns.
 func (c *Config) MatchToolPermission(title string, input map[string]string) ToolPermissionAction {
 	titleLower := strings.ToLower(title)
-	for _, rule := range c.ToolPermissions {
+	for _, rule := range c.ToolPermissions.Rules {
 		if !matchRule(rule, titleLower, input) {
 			continue
 		}
@@ -173,22 +202,45 @@ func (c *Config) ResolveAgent(agent string) string {
 	return agent
 }
 
-// Load reads configuration from ~/.config/acpp/config.yaml
-// If the file doesn't exist, returns default config.
-// If XDG_CONFIG_HOME is set, uses that instead of ~/.config
-func Load() (*Config, error) {
+// configPath returns the path to the config file.
+func configPath() (string, error) {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
 	if configDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return DefaultConfig(), nil
+			return "", err
 		}
 		configDir = filepath.Join(home, ".config")
 	}
+	return filepath.Join(configDir, "acpp", "config.yaml"), nil
+}
 
-	configPath := filepath.Join(configDir, "acpp", "config.yaml")
+// Save writes configuration to ~/.config/acpp/config.yaml.
+func (c *Config) Save() error {
+	path, err := configPath()
+	if err != nil {
+		return errors.Wrap(err, "determining config path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errors.Wrap(err, "creating config directory")
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return errors.Wrap(err, "marshalling config")
+	}
+	return errors.Wrap(os.WriteFile(path, data, 0o644), "writing config file")
+}
 
-	data, err := os.ReadFile(configPath)
+// Load reads configuration from ~/.config/acpp/config.yaml
+// If the file doesn't exist, returns default config.
+// If XDG_CONFIG_HOME is set, uses that instead of ~/.config
+func Load() (*Config, error) {
+	path, err := configPath()
+	if err != nil {
+		return DefaultConfig(), nil
+	}
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DefaultConfig(), nil

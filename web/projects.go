@@ -1,6 +1,7 @@
 package web
 
 import (
+	"log/slog"
 	"net/http"
 	"path/filepath"
 
@@ -116,16 +117,16 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		projectName = "default"
 	}
 
-	sessionID, err := s.creator.StartSessionWeb(body.Dir, agent, sandbox, projectName)
+	sessionID, err := s.creator.StartSessionWeb(body.Dir, agent, sandbox, "", projectName)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// Send the first prompt if provided
-	if body.Prompt != "" && s.prompter != nil {
-		go func() {
-			_ = s.prompter.SendPromptBySessionID(sessionID, body.Prompt)
-		}()
+	// Send the first prompt if provided.
+	if body.Prompt != "" && s.webChannel != nil {
+		if err := s.webChannel.SubmitPrompt(sessionID, body.Prompt); err != nil {
+			slog.Error("web: submit initial prompt", "session", sessionID, "error", err)
+		}
 	}
 
 	return c.JSON(http.StatusCreated, map[string]string{"id": sessionID, "dir": filepath.Base(body.Dir)})

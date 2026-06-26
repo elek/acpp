@@ -6,7 +6,7 @@ import (
 )
 
 // Hub manages WebSocket subscribers per session ID.
-// Gateway publishes events here; connected WebSocket clients receive them.
+// Controller publishes events here; connected WebSocket clients receive them.
 type Hub struct {
 	mu   sync.RWMutex
 	subs map[string]map[*subscriber]struct{} // sessionID -> set of subscribers

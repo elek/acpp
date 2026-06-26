@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "acpp",
+  "outputfilename": "acpp-desktop",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "wailsjsdir": "./frontend",
+  "author": {
+    "name": "elek"
+  },
+  "info": {
+    "description": "ACPP Desktop - Wails wrapper for the ACPP web UI"
+  }
+}

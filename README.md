@@ -2,6 +2,8 @@
 
 ACPP is a multi-channel proxy for AI coding agents. It bridges agent protocols (ACP subprocess, OpenCode HTTP) to communication channels (Discord, Console, Web UI), providing session management, usage tracking, and persistent logging.
 
+![ACPP Screenshot](screenshot.png)
+
 ## Status
 
 ** IMPORTANT **
@@ -77,6 +79,14 @@ These commands work across all channels (Discord, Console, Web):
 | `/cd <dir>` | Change directory (restarts session) |
 | `/ls [dir]` | List directory contents |
 | `!<cmd>` | Execute a shell command |
+
+## Internal model
+
+ * Session: one client may use more sessions.
+ * Client an ACP client connection. Tight to an ACP session. 
+ * Conversation: a conversation from an agentic loop (ACPSession + usage metadata)
+ * Project: collection of one or more sessions (usually tight to a single GitHub repo)
+ * Process: a running ACP agent instance (stdin, stdout)
 
 ## Agent Backends
 
@@ -160,6 +170,36 @@ The database is optional — without it, sessions are ephemeral.
 - **Prometheus metrics** exposed on `:9090` by default
 - **OpenTelemetry OTLP** export via the `otlp` config section
 - **Web UI** with live WebSocket streaming of session events
+
+## Desktop App
+
+The `desktop/` directory contains a [Wails](https://wails.io/)-based desktop UI wrapper.
+
+### Build Dependencies
+
+Install the following packages on the host before building:
+
+- `pkg-config`
+- `gtk3` (development headers)
+- `webkitgtk 4.1` (development headers)
+- `glib` (development headers)
+- `wails` CLI (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)
+
+On Arch Linux:
+
+```bash
+pacman -S pkg-config gtk3 webkit2gtk-4.1 glib2
+```
+
+On Debian/Ubuntu:
+
+```bash
+apt install pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libglib2.0-dev
+```
+
+### Test Script
+
+`desktop/test.sh` builds the app, launches it, waits for the window to appear, and takes a screenshot. Additional runtime dependencies for the test: `xdotool`, `imagemagick` (for the `import` command).
 
 ## License
 

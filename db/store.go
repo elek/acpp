@@ -4,26 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"strconv"
 	"time"
 
-	"github.com/coder/acp-go-sdk"
-	acplib "github.com/elek/acpp/acp"
+	"github.com/elek/acpp/acp"
+	acplib "github.com/elek/acpp/types"
 	"github.com/pkg/errors"
 )
 
 // ProjectRow holds a project record from the database.
 type ProjectRow struct {
-	Name       string
-	Agent      string
-	Dir        string
-	Sandbox    string
-	Permission string
-	Env        []string
-	Repo       string
-	Hooks      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	Name            string
+	Agent           string
+	Dir             string
+	Sandbox         string
+	SandboxProfiles string
+	Permission      string
+	Env             []string
+	Repo            string
+	Hooks           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ProjectListRow is a summary row returned by ListProjects.
@@ -674,12 +677,13 @@ func (s *PostgresStore) GetModelStats(ctx context.Context, since time.Time) ([]M
 
 // validProjectFields lists the columns that can be set via SetProjectField.
 var validProjectFields = map[string]bool{
-	"agent":      true,
-	"dir":        true,
-	"sandbox":    true,
-	"permission": true,
-	"repo":       true,
-	"hooks":      true,
+	"agent":            true,
+	"dir":              true,
+	"sandbox":          true,
+	"sandbox_profiles": true,
+	"permission":       true,
+	"repo":             true,
+	"hooks":            true,
 }
 
 // GetProject returns the project with the given name.
@@ -695,9 +699,9 @@ func (s *PostgresStore) GetProject(ctx context.Context, name string) (ProjectRow
 	var r ProjectRow
 	var envJSON json.RawMessage
 	err = s.pool.QueryRow(ctx, `
-		SELECT name, agent, dir, sandbox, permission, env, repo, hooks, created_at, updated_at
+		SELECT name, agent, dir, sandbox, sandbox_profiles, permission, env, repo, hooks, created_at, updated_at
 		FROM project WHERE name = $1`, name).Scan(
-		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.CreatedAt, &r.UpdatedAt,
+		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.SandboxProfiles, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return ProjectRow{}, errors.Wrap(err, "querying project")
@@ -758,6 +762,21 @@ func (s *PostgresStore) ListProjects(ctx context.Context) ([]ProjectListRow, err
 		result = append(result, r)
 	}
 	return result, rows.Err()
+}
+
+// MarshalEvent renders a raw ACP update into the JSON payload and event-type
+// string consumers (the browser and the log table) use. The whole SessionUpdate
+// is marshalled — its union flattens the variant's fields next to a
+// "sessionUpdate" discriminator — which is exactly the shape persisted history
+// replays with.
+func MarshalEvent(update acp.SessionUpdate) (json.RawMessage, string) {
+	eventType := ClassifyEvent(update)
+	raw, err := json.Marshal(update)
+	if err != nil {
+		slog.Debug("db: marshal event fallback", "type", eventType, "error", err)
+		raw = []byte(`{"_marshalError":` + strconv.Quote(err.Error()) + `,"_eventType":"` + eventType + `"}`)
+	}
+	return raw, eventType
 }
 
 // ClassifyEvent returns the event type string for a SessionUpdate.

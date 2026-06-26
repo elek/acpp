@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
 while true; do
-    go run . discord
+    go run . serve
     sleep 1
 done

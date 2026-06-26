@@ -12,17 +12,17 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
-	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
-	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/types"
 )
 
 // StatusProvider returns all current session StatusInfo values.
-type StatusProvider func() []acp.StatusInfo
+type StatusProvider func() []types.StatusInfo
 
 // shortAgent returns the base name of the agent binary (no path, no arguments).
 func shortAgent(agent string) string {
@@ -159,6 +159,12 @@ func registerInstruments(meter metric.Meter, provider StatusProvider) error {
 		return err
 	}
 
+	contextUsed, err := meter.Int64ObservableGauge("acpp_context_used",
+		metric.WithDescription("Tokens currently in the context window"))
+	if err != nil {
+		return err
+	}
+
 	maxOutputTokens, err := meter.Int64ObservableGauge("acpp_max_output_tokens",
 		metric.WithDescription("Max output tokens limit"))
 	if err != nil {
@@ -175,7 +181,7 @@ func registerInstruments(meter metric.Meter, provider StatusProvider) error {
 		infos := provider()
 		var running int64
 		for _, info := range infos {
-			if info.Status == acp.StatusRunning || info.Status == acp.StatusPending {
+			if info.Status == types.StatusRunning || info.Status == types.StatusPending {
 				running++
 			}
 		}
@@ -195,10 +201,11 @@ func registerInstruments(meter metric.Meter, provider StatusProvider) error {
 			o.ObserveInt64(webSearchRequests, info.Usage.WebSearchRequests, attrs)
 			o.ObserveFloat64(costUSD, info.Usage.CostUSD, attrs)
 			o.ObserveInt64(contextWindow, info.Usage.ContextWindow, attrs)
+			o.ObserveInt64(contextUsed, info.Usage.ContextUsed, attrs)
 			o.ObserveInt64(maxOutputTokens, info.Usage.MaxOutputTokens, attrs)
 
 			// Emit session status as labeled gauge (1 for current status, 0 for others)
-			for _, st := range []acp.Status{acp.StatusPending, acp.StatusRunning, acp.StatusComplete, acp.StatusError} {
+			for _, st := range []types.Status{types.StatusPending, types.StatusRunning, types.StatusComplete, types.StatusError} {
 				var val int64
 				if info.Status == st {
 					val = 1
@@ -214,7 +221,7 @@ func registerInstruments(meter metric.Meter, provider StatusProvider) error {
 	},
 		promptCount, inputTokens, outputTokens,
 		cacheCreationTokens, cacheReadTokens, webSearchRequests,
-		costUSD, sessionStatus, contextWindow, maxOutputTokens,
+		costUSD, sessionStatus, contextWindow, contextUsed, maxOutputTokens,
 		openSessions,
 	)
 	return err
@@ -250,7 +257,6 @@ func sessionsHandler(provider StatusProvider) http.HandlerFunc {
 		sessions := make([]jsonSession, 0, len(infos))
 		for _, info := range infos {
 			s := jsonSession{
-				Source:     info.Source,
 				Agent:      info.Agent,
 				Dir:        info.CWD,
 				Status:     string(info.Status),

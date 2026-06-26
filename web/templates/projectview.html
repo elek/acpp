@@ -81,9 +81,13 @@
   .prompt-bar textarea { flex: 1; resize: none; border: 1px solid #d6d3d1; border-radius: 8px; padding: 0.625em 0.875em; font-family: inherit; font-size: 0.875em; line-height: 1.5; color: #1c1917; background: #fafaf9; outline: none; transition: border-color 0.15s; min-height: 2.5em; max-height: 10em; overflow-y: auto; }
   .prompt-bar textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
   .prompt-bar textarea:disabled { background: #f5f5f4; color: #a8a29e; }
-  .prompt-bar button { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 0.625em 1.25em; font-size: 0.875em; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
-  .prompt-bar button:hover { background: #1d4ed8; }
-  .prompt-bar button:disabled { background: #93c5fd; cursor: not-allowed; }
+  .prompt-bar button { border: none; border-radius: 8px; padding: 0.625em 1.25em; font-size: 0.875em; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .prompt-bar button.prompt-send { background: #2563eb; color: #fff; }
+  .prompt-bar button.prompt-send:hover { background: #1d4ed8; }
+  .prompt-bar button.prompt-send:disabled { background: #93c5fd; cursor: not-allowed; }
+  .prompt-bar button.prompt-cancel { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+  .prompt-bar button.prompt-cancel:hover { background: #fee2e2; }
+  .prompt-bar button.prompt-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
   .prompt-bar-hint { font-size: 0.6875em; color: #a8a29e; margin-top: 0.25em; }
 
   /* Quick search overlay */
@@ -218,7 +222,8 @@
     <div class="prompt-bar">
       <div class="prompt-bar-inner">
         <textarea id="prompt-input" placeholder="Send a prompt..." rows="1"></textarea>
-        <button id="prompt-send">Send</button>
+        <button id="prompt-cancel" class="prompt-cancel" style="display:none">Cancel</button>
+        <button id="prompt-send" class="prompt-send">Send</button>
       </div>
       <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline</div>
     </div>
@@ -338,6 +343,8 @@
     var header = '';
     if (tu.input && tu.input.skill) {
       header = '\u{1F3AF} skill: ' + escapeHtml(tu.input.skill);
+    } else if (tu.title && tu.title.indexOf('mcp__') === 0) {
+      header = '\u{1F50C} ' + escapeHtml(tu.title);
     } else {
       var emoji = toolEmojis[tu.toolKind] || '';
       if (emoji) header = emoji + ' ';
@@ -514,6 +521,23 @@
         hr.className = 'prompt-separator';
         container.appendChild(hr);
         break;
+
+      case 'text_message':
+        closeAllBlocks();
+        if (p && p.text) {
+          var tm = document.createElement('div');
+          tm.className = 'system-message';
+          tm.textContent = p.text;
+          container.appendChild(tm);
+        }
+        break;
+
+      case 'session_replaced':
+        if (p && p.new_session_id) {
+          // /clear created a fresh session; navigate the browser to it.
+          window.location.href = '/session/' + encodeURIComponent(p.new_session_id);
+        }
+        break;
     }
   }
 
@@ -565,6 +589,15 @@
   // Prompt sending
   var input = document.getElementById('prompt-input');
   var btn = document.getElementById('prompt-send');
+  var cancelBtn = document.getElementById('prompt-cancel');
+
+  function updateCancelButton() {
+    if (cancelBtn) {
+      cancelBtn.style.display = (sessionId && isSessionRunning) ? '' : 'none';
+    }
+  }
+  updateCancelButton();
+
   if (input && btn) {
     var sending = false;
     function autoResize() {
@@ -660,6 +693,7 @@
           // Switch to the new session in-place
           sessionId = data.id;
           isSessionRunning = true;
+          updateCancelButton();
 
           // Reset rendering state
           assistantText = '';
@@ -720,6 +754,31 @@
     }
 
     btn.addEventListener('click', sendPrompt);
+
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function() {
+        if (cancelBtn.disabled) return;
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Cancelling...';
+
+        fetch('/session/' + encodeURIComponent(sessionId) + '/prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: '/cancel' })
+        }).then(function(r) {
+          return r.json().then(function(j) {
+            if (!r.ok) throw new Error(j.error || 'Failed');
+            return j;
+          });
+        }).catch(function(err) {
+          alert('Failed to cancel: ' + err.message);
+        }).finally(function() {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = 'Cancel';
+        });
+      });
+    }
+
     input.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
     });

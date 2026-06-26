@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	acplib "github.com/elek/acpp/acp"
+	acplib "github.com/elek/acpp/types"
 )
 
 // MemStore is an in-memory implementation of Store for testing and lightweight usage.

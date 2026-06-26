@@ -38,10 +38,10 @@ func TestWildcardMatch(t *testing.T) {
 
 func TestMatchToolPermission_TitleOnly(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{Title: "Bash", Action: ToolPermissionDeny},
 			{Title: "Read", Action: ToolPermissionAsk},
-		},
+		}},
 	}
 
 	require.Equal(t, ToolPermissionDeny, cfg.MatchToolPermission("Bash", nil))
@@ -51,9 +51,9 @@ func TestMatchToolPermission_TitleOnly(t *testing.T) {
 
 func TestMatchToolPermission_CaseInsensitive(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{Title: "bash", Action: ToolPermissionDeny},
-		},
+		}},
 	}
 
 	require.Equal(t, ToolPermissionDeny, cfg.MatchToolPermission("Bash", nil))
@@ -63,12 +63,12 @@ func TestMatchToolPermission_CaseInsensitive(t *testing.T) {
 
 func TestMatchToolPermission_InputOnly(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{
 				Action: ToolPermissionDeny,
 				Input:  map[string]string{"command": "*rm -rf*"},
 			},
-		},
+		}},
 	}
 
 	require.Equal(t, ToolPermissionDeny, cfg.MatchToolPermission("Bash", map[string]string{"command": "rm -rf /"}))
@@ -77,13 +77,13 @@ func TestMatchToolPermission_InputOnly(t *testing.T) {
 
 func TestMatchToolPermission_TitleAndInput(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{
 				Title:  "Read",
 				Action: ToolPermissionAsk,
 				Input:  map[string]string{"file_path": "*.netrc"},
 			},
-		},
+		}},
 	}
 
 	// Both title AND input must match
@@ -96,10 +96,10 @@ func TestMatchToolPermission_TitleAndInput(t *testing.T) {
 
 func TestMatchToolPermission_FirstRuleWins(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{Title: "Bash", Action: ToolPermissionDeny},
 			{Title: "Bash", Action: ToolPermissionAsk},
-		},
+		}},
 	}
 
 	// First rule wins
@@ -108,7 +108,7 @@ func TestMatchToolPermission_FirstRuleWins(t *testing.T) {
 
 func TestMatchToolPermission_MultipleInputParams(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{
 				Title:  "Edit",
 				Action: ToolPermissionDeny,
@@ -117,7 +117,7 @@ func TestMatchToolPermission_MultipleInputParams(t *testing.T) {
 					"new_string": "*password*",
 				},
 			},
-		},
+		}},
 	}
 
 	// Both input params match
@@ -134,9 +134,9 @@ func TestMatchToolPermission_MultipleInputParams(t *testing.T) {
 
 func TestMatchToolPermission_EmptyRuleSkipped(t *testing.T) {
 	cfg := &Config{
-		ToolPermissions: []ToolPermissionRule{
+		ToolPermissions: ToolPermissions{Rules: []ToolPermissionRule{
 			{Action: ToolPermissionDeny}, // no title or input — should not match anything
-		},
+		}},
 	}
 
 	require.Equal(t, ToolPermissionAction(""), cfg.MatchToolPermission("Bash", map[string]string{"command": "ls"}))

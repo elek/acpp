@@ -2,3 +2,7 @@ replay
 acpp
 log
 prompts
+*.txt
+.pnpm-debug.log
+desktop/desktop
+docs/plans/
