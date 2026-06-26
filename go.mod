@@ -11,6 +11,7 @@ require (
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/labstack/echo/v4 v4.15.0

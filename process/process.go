@@ -8,6 +8,7 @@ package process
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/elek/acpp/sandbox"
+	"github.com/google/shlex"
 	"github.com/pkg/errors"
 )
 
@@ -103,7 +105,17 @@ var DefaultManager = NewManager()
 func (m *Manager) Start(parent context.Context, spec Spec) (*Process, error) {
 	ctx, cancel := context.WithCancel(parent)
 
-	agentArgs := strings.Fields(spec.Agent)
+	// Use shlex (not strings.Fields) so quoted arguments containing spaces are
+	// preserved as single arguments, e.g. `claude --system-prompt "be brief"`.
+	agentArgs, err := shlex.Split(spec.Agent)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("parse agent command %q: %w", spec.Agent, err)
+	}
+	if len(agentArgs) == 0 {
+		cancel()
+		return nil, fmt.Errorf("empty agent command")
+	}
 	cmdName, args := agentArgs[0], agentArgs[1:]
 	if spec.Sandbox != nil {
 		cmdName, args = spec.Sandbox.Wrap(agentArgs[0], agentArgs[1:])
