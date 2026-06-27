@@ -14,6 +14,7 @@ type CLI struct {
 	Web    cli2.Web    `cmd:"" help:"Start web UI for browsing and running sessions"`
 	Serve  cli2.Serve  `cmd:"" help:"Start both the web UI and the Discord bot on a shared router"`
 	Read cli2.Read `cmd:"" help:"Read a text file (used by sandbox delegation)"`
+	Tck  cli2.Tck  `cmd:"" help:"Test ACP agent binaries and report a compatibility matrix"`
 }
 
 func main() {

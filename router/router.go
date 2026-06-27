@@ -263,6 +263,20 @@ func (r *Router) Opts(convID string) (types.SessionOpts, bool) {
 	return types.SessionOpts{}, false
 }
 
+// Init returns the agent's initialize response for a conversation, looked up by
+// its stable ConversationID. Unlike most updates the initialize response is not
+// fanned out to subscribers (it is consumed internally to drive session/new), so
+// this accessor is the synchronized way to inspect the negotiated agent
+// capabilities after WaitReady. The bool is false for an unknown conversation.
+func (r *Router) Init(convID string) (acp.InitializeResponse, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if state, ok := r.sessions[convID]; ok {
+		return state.acpInit, true
+	}
+	return acp.InitializeResponse{}, false
+}
+
 // Active reports whether a conversation with the given ConversationID is still
 // live (created and not yet closed).
 func (r *Router) Active(conversationID string) bool {
