@@ -19,21 +19,8 @@ type bwrapSandbox struct {
 // name is the fragment name to resolve from config (e.g. "sandbox").
 // profiles are additional fragment names to merge (e.g. ["ssh", "systemd"]).
 // cwd is the working directory to bind into the sandbox.
-// configPaths are YAML files to load fragments from (searched in order,
-// fragments from later files override earlier ones).
-func NewBwrapSandbox(name string, profiles []string, cwd string, configPaths ...string) (Sandbox, error) {
-	// Load all config files and merge fragments
-	allFragments := make(map[string]*BwrapConfig)
-	for _, path := range configPaths {
-		fragments, err := loadBwrapConfig(path)
-		if err != nil {
-			return nil, fmt.Errorf("loading bwrap config %s: %w", path, err)
-		}
-		for k, v := range fragments {
-			allFragments[k] = v
-		}
-	}
-
+// allFragments is the merged fragment set (see loadFragments).
+func NewBwrapSandbox(name string, profiles []string, cwd string, allFragments map[string]*BwrapConfig) (Sandbox, error) {
 	if _, ok := allFragments[name]; !ok {
 		return nil, fmt.Errorf("no config fragment %q found", name)
 	}
@@ -247,33 +234,17 @@ func loadBwrapConfig(path string) (map[string]*BwrapConfig, error) {
 	return fragments, nil
 }
 
-// DefaultBwrapConfigPaths returns the config file paths to search for bwrap
-// fragment definitions, in order of priority (later files override earlier).
-func DefaultBwrapConfigPaths() []string {
-	var paths []string
-
-	// Built-in config bundled with the binary
-	exe, err := os.Executable()
-	if err == nil {
-		bundled := filepath.Join(filepath.Dir(exe), "config.yaml")
-		if _, err := os.Stat(bundled); err == nil {
-			paths = append(paths, bundled)
-		}
-	}
-	paths = append(paths, "/home/elek/p/acpp/sandbox/config.yaml")
-	// User config: ~/.config/acpp/bbwrap.yaml
+// userConfigPath returns the path to the user's bwrap config override,
+// ~/.config/acpp/bbwrap.yaml (honoring XDG_CONFIG_HOME). Returns "" if the
+// config directory cannot be determined.
+func userConfigPath() string {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
 	if configDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			configDir = filepath.Join(home, ".config")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
 		}
+		configDir = filepath.Join(home, ".config")
 	}
-	if configDir != "" {
-		userConfig := filepath.Join(configDir, "acpp", "bbwrap.yaml")
-		if _, err := os.Stat(userConfig); err == nil {
-			paths = append(paths, userConfig)
-		}
-	}
-
-	return paths
+	return filepath.Join(configDir, "acpp", "bbwrap.yaml")
 }

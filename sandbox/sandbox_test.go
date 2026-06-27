@@ -118,7 +118,9 @@ sandbox:
 `), 0o644)
 	require.NoError(t, err)
 
-	sb, err := NewBwrapSandbox("sandbox", nil, "/tmp", configPath)
+	fragments, err := loadFragments(configPath)
+	require.NoError(t, err)
+	sb, err := NewBwrapSandbox("sandbox", nil, "/tmp", fragments)
 	require.NoError(t, err)
 
 	cmd, args := sb.Wrap("echo", []string{"hello"})
@@ -143,7 +145,9 @@ ssh:
 `), 0o644)
 	require.NoError(t, err)
 
-	sb, err := NewBwrapSandbox("sandbox", []string{"ssh"}, "/tmp", configPath)
+	fragments, err := loadFragments(configPath)
+	require.NoError(t, err)
+	sb, err := NewBwrapSandbox("sandbox", []string{"ssh"}, "/tmp", fragments)
 	require.NoError(t, err)
 
 	cmd, args := sb.Wrap("agent", []string{})
@@ -157,6 +161,52 @@ ssh:
 		}
 	}
 	require.True(t, hasSSH, "expected ssh profile ro-bind in bwrap args")
+}
+
+func TestEmbeddedFragmentsAlwaysPresent(t *testing.T) {
+	// With no config files at all, the embedded fragments must be available.
+	fragments, err := loadFragments()
+	require.NoError(t, err)
+	for _, name := range []string{"base", "etc", "sandbox", "ssh", "systemd", "docker"} {
+		require.Contains(t, fragments, name, "embedded fragment %q must be present", name)
+	}
+}
+
+func TestEmbeddedSandboxDefaultsToBaseEtc(t *testing.T) {
+	fragments, err := loadFragments()
+	require.NoError(t, err)
+	require.Equal(t, []string{"base", "etc"}, fragments["sandbox"].Extend)
+
+	// Resolving sandbox yields exactly the union of base and etc ro-binds.
+	resolved, err := resolveFragment("sandbox", fragments, nil)
+	require.NoError(t, err)
+	expected := append(append([]string{}, fragments["base"].ROBind...), fragments["etc"].ROBind...)
+	require.Equal(t, expected, resolved.roBind)
+}
+
+func TestUserConfigOverlayReplacesFragment(t *testing.T) {
+	dir := t.TempDir()
+	overlay := filepath.Join(dir, "bbwrap.yaml")
+	err := os.WriteFile(overlay, []byte(`
+sandbox:
+  extend:
+    - base
+  bind:
+    - /tmp/custom
+`), 0o644)
+	require.NoError(t, err)
+
+	fragments, err := loadFragments(overlay)
+	require.NoError(t, err)
+
+	// The embedded base fragment is still present (overlay does not remove it).
+	require.Contains(t, fragments, "base")
+	require.NotEmpty(t, fragments["base"].ROBind)
+
+	// The sandbox fragment is fully replaced by the overlay (not merged).
+	require.Equal(t, []string{"base"}, fragments["sandbox"].Extend)
+	require.Equal(t, []string{"/tmp/custom"}, fragments["sandbox"].Bind)
+	require.Empty(t, fragments["sandbox"].ROBind)
 }
 
 func TestParseBindEntry(t *testing.T) {

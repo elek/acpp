@@ -12,9 +12,9 @@ base:
     - /usr/share/zoneinfo
 
 etc:
-  ro-bind:    
+  ro-bind:
     - /etc/nsswitch.conf
-    - /etc/ssl/openssl.cnf  
+    - /etc/ssl/openssl.cnf
     - /etc/alternatives
     - /etc/passwd
     - /etc/group
@@ -28,60 +28,11 @@ etc:
     - /etc/ld.so.conf.d
     - /etc/localtime
 
-java:
-  ro-bind:
-    - /etc/java21-openjdk
-    - /etc/java-openjdk
-
-baserepo:
-  bind:
-    - jr/storj
-    - jr/storj2
-    - jr/storj3
-    - jr/common
-    - jr/uplink
-
-docker:
-  bind:
-    - /var/lib/docker
-    - /var/run/docker.sock
-
-psfs:
-  ro-bind:
-    - .psfs/testdata:testdata
-    - .psfs/.netrc:.netrc
-    - .psfs/.config/gogcli:.config/gogcli    
-    - .psfs/.config/slack-cli:.config/slack-cli
-
+# Default sandbox profile. Override or extend it in ~/.config/acpp/bbwrap.yaml.
 sandbox:
-  extend:    
+  extend:
     - base
     - etc
-    - java
-    - baserepo
-    - psfs
-  ro-bind:    
-    - .cargo/bin
-    - dotfiles/.gitignore_global
-    - .ssh/code_signing
-    - .ssh/known_hosts    
-    - .profile
-    - .gitconfig
-    - .config/gh
-    - .config/git
-    - .config/uplink
-    - .config/worldview
-    - .local    
-  bind:
-    - .npm-global
-    - bin
-    - go
-    - .claude
-    - .claude-elek
-    - .codex
-    - .gemini
-    - .cache
-
 
 ssh:
   ro-bind:
@@ -97,3 +48,8 @@ systemd:
     - /sys
   bind:
     - /run/user/1000
+
+docker:
+  bind:
+    - /var/lib/docker
+    - /var/run/docker.sock

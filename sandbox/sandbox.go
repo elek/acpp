@@ -3,6 +3,7 @@ package sandbox
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -55,11 +56,18 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, configPaths
 		return nil, fmt.Errorf("unknown sandbox type: %s", sandboxType)
 	}
 
-	if len(configPaths) == 0 {
-		configPaths = DefaultBwrapConfigPaths()
+	// The user override (~/.config/acpp/bbwrap.yaml) is applied first, then any
+	// explicitly-passed configPaths take precedence over it.
+	overlays := configPaths
+	if userPath := userConfigPath(); userPath != "" {
+		if _, err := os.Stat(userPath); err == nil {
+			overlays = append([]string{userPath}, configPaths...)
+		}
 	}
-	if len(configPaths) == 0 {
-		return nil, fmt.Errorf("no bbwrap config files found")
+
+	fragments, err := loadFragments(overlays...)
+	if err != nil {
+		return nil, err
 	}
 
 	var profileList []string
@@ -72,7 +80,34 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, configPaths
 		}
 	}
 
-	return NewBwrapSandbox("sandbox", profileList, cwd, configPaths...)
+	return NewBwrapSandbox("sandbox", profileList, cwd, fragments)
+}
+
+// loadFragments builds the bwrap fragment set. The embedded config is always
+// the base layer; then each configPath is overlaid in order. Fragments from
+// later sources fully replace earlier fragments with the same name.
+func loadFragments(configPaths ...string) (map[string]*BwrapConfig, error) {
+	allFragments := make(map[string]*BwrapConfig)
+
+	embedded, err := parseBwrapConfig(embeddedBwrapConfig)
+	if err != nil {
+		return nil, fmt.Errorf("parsing embedded config: %w", err)
+	}
+	for k, v := range embedded {
+		allFragments[k] = v
+	}
+
+	for _, path := range configPaths {
+		fragments, err := loadBwrapConfig(path)
+		if err != nil {
+			return nil, fmt.Errorf("loading bwrap config %s: %w", path, err)
+		}
+		for k, v := range fragments {
+			allFragments[k] = v
+		}
+	}
+
+	return allFragments, nil
 }
 
 // LookupBwrap checks if bwrap is available on the system.
