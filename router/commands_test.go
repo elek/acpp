@@ -105,6 +105,79 @@ func TestHandleShellUnknownConversation(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestHandleHelpListsHarnessCommands verifies /help fans back a listing that
+// includes every built-in harness command and, when the agent has advertised
+// none, omits the agent section entirely.
+func TestHandleHelpListsHarnessCommands(t *testing.T) {
+	rt := New()
+	meta := seedShellSession(t, rt, types.SessionOpts{})
+
+	col := &collector{t: t, done: make(chan struct{})}
+	rt.Subscribe(col.Receive)
+
+	handled, err := rt.HandleCommands(context.Background(), meta, "/help")
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	out := col.text()
+	require.Contains(t, out, "Harness commands:")
+	for _, name := range []string{"/cancel", "/clear", "/exit", "/help", "!"} {
+		require.Contains(t, out, name)
+	}
+	require.NotContains(t, out, "Agent commands:")
+}
+
+// TestHandleHelpListsAgentCommandsFirst verifies /help lists the agent's
+// advertised commands before the harness commands.
+func TestHandleHelpListsAgentCommandsFirst(t *testing.T) {
+	rt := New()
+	meta := seedShellSession(t, rt, types.SessionOpts{})
+	rt.mu.Lock()
+	rt.sessions[meta.ConversationID].availableCommands = []acp.AvailableCommand{
+		{Name: "review", Description: "Review a pull request"},
+		{Name: "plan", Description: "Draft an implementation plan"},
+	}
+	rt.mu.Unlock()
+
+	col := &collector{t: t, done: make(chan struct{})}
+	rt.Subscribe(col.Receive)
+
+	handled, err := rt.HandleCommands(context.Background(), meta, "/help")
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	out := col.text()
+	require.Contains(t, out, "Agent commands:")
+	require.Contains(t, out, "review")
+	require.Contains(t, out, "Review a pull request")
+	require.Contains(t, out, "plan")
+	require.Less(t, strings.Index(out, "Agent commands:"), strings.Index(out, "Harness commands:"),
+		"agent commands should be listed before harness commands")
+}
+
+// TestOnMessageCapturesAvailableCommands verifies that an available_commands_update
+// notification is stored on the conversation state so /help can list it later.
+func TestOnMessageCapturesAvailableCommands(t *testing.T) {
+	rt := New()
+	meta := seedShellSession(t, rt, types.SessionOpts{})
+
+	rt.onMessage(context.Background(), meta.ConversationID, nil, acp.SessionNotification{
+		SessionId: meta.SessionID,
+		Update: acp.SessionUpdate{
+			AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+				AvailableCommands: []acp.AvailableCommand{{Name: "deploy", Description: "Ship it"}},
+				SessionUpdate:     "available_commands_update",
+			},
+		},
+	})
+
+	rt.mu.RLock()
+	got := rt.sessions[meta.ConversationID].availableCommands
+	rt.mu.RUnlock()
+	require.Len(t, got, 1)
+	require.Equal(t, "deploy", got[0].Name)
+}
+
 // TestRunInSandboxNilSandbox verifies the helper runs a command unwrapped when
 // no sandbox is configured, returning combined output.
 func TestRunInSandboxNilSandbox(t *testing.T) {

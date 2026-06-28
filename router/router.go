@@ -71,6 +71,11 @@ type SessionState struct {
 	// session/new response). Restart replaces it to wait for the next session.
 	// Guarded by Router.mu; nil once already consumed.
 	ready chan struct{}
+	// availableCommands holds the latest set of commands the agent advertised via
+	// an available_commands_update notification (the only place the agent exposes
+	// them — they are absent from the initialize/session-new responses). Used by
+	// /help; replaced on each update and cleared on Restart. Guarded by Router.mu.
+	availableCommands []acp.AvailableCommand
 }
 
 // OnShutdown registers the cancel function the /exit command invokes to shut the
@@ -211,13 +216,18 @@ func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMess
 		}
 		return
 	default:
-		r.mu.RLock()
+		r.mu.Lock()
 		state := r.sessions[convID]
 		var meta types.ConversationMeta
 		if state != nil {
 			meta = state.meta
+			// Capture the agent's advertised commands so /help can list them; this
+			// notification is the only place the agent exposes them.
+			if n, ok := msg.(acp.SessionNotification); ok && n.Update.AvailableCommandsUpdate != nil {
+				state.availableCommands = n.Update.AvailableCommandsUpdate.AvailableCommands
+			}
 		}
-		r.mu.RUnlock()
+		r.mu.Unlock()
 		r.Receive(ctx, rid, meta, msg)
 	}
 }
@@ -300,6 +310,9 @@ func (r *Router) Restart(ctx context.Context, id types.ConversationMeta) (types.
 		old = state.meta
 		state.meta.SessionID = ""
 		state.ready = make(chan struct{})
+		// Discard the prior session's advertised commands; the fresh session will
+		// re-advertise its own via available_commands_update.
+		state.availableCommands = nil
 	}
 	r.mu.Unlock()
 	if !ok {

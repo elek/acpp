@@ -68,9 +68,64 @@ func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, 
 			shutdown()
 		}
 		return true, nil
+	case "/help":
+		return r.handleHelp(ctx, id)
 	}
 
 	return false, nil
+}
+
+// harnessCommands is the static list of commands the harness itself handles,
+// used to render /help. It is display-only; dispatch happens in the switch above.
+var harnessCommands = []struct{ Name, Desc string }{
+	{"/cancel", "Cancel the in-flight agent turn"},
+	{"/clear", "Restart the session, discarding prior context"},
+	{"/exit", "Shut the application down"},
+	{"/help", "List available commands"},
+	{"!<command>", "Run a shell command in the conversation's sandbox"},
+}
+
+// handleHelp fans back a listing of the commands available in this conversation:
+// first the commands the agent advertised (if any), then the built-in harness
+// commands. The listing is surfaced as an agent message so every channel renders
+// it the same way it renders the agent's own output.
+func (r *Router) handleHelp(ctx context.Context, id types.ConversationMeta) (handled bool, err error) {
+	r.mu.RLock()
+	state, ok := r.sessions[id.ConversationID]
+	var agentCmds []acp.AvailableCommand
+	var meta types.ConversationMeta
+	if ok {
+		agentCmds = state.availableCommands
+		meta = state.meta
+	}
+	r.mu.RUnlock()
+	if !ok {
+		return true, fmt.Errorf("router: unknown conversation %v", id)
+	}
+
+	var b strings.Builder
+	if len(agentCmds) > 0 {
+		b.WriteString("Agent commands:\n")
+		for _, c := range agentCmds {
+			fmt.Fprintf(&b, "  /%-14s %s\n", c.Name, c.Description)
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("Harness commands:\n")
+	for _, c := range harnessCommands {
+		fmt.Fprintf(&b, "  %-15s %s\n", c.Name, c.Desc)
+	}
+
+	r.Receive(ctx, nil, meta, acp.SessionNotification{
+		SessionId: meta.SessionID,
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content:       acp.TextBlock(b.String()),
+				SessionUpdate: "agent_message_chunk",
+			},
+		},
+	})
+	return true, nil
 }
 
 // handleShell runs command inside the conversation's sandbox and fans the
