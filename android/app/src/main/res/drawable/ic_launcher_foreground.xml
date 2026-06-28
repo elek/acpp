@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A simple "smart_toy" style robot glyph centered in the safe zone. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30a4,4 0,0 1,4 4v4h8a8,8 0,0 1,8 8v18a8,8 0,0 1,-8 8H42a8,8 0,0 1,-8 -8V46a8,8 0,0 1,8 -8h8v-4a4,4 0,0 1,4 -4zM46,52a4,4 0,1 0,0 8,4 4,0 0,0 0,0 -8zM62,52a4,4 0,1 0,0 8,4 4,0 0,0 0,0 -8zM34,50a3,3 0,0 0,-3 3v8a3,3 0,0 0,6 0v-8a3,3 0,0 0,-3 -3zM74,50a3,3 0,0 0,-3 3v8a3,3 0,0 0,6 0v-8a3,3 0,0 0,-3 -3z" />
+</vector>

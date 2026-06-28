@@ -149,6 +149,7 @@ func New(store db.SessionReader, addr string) *Server {
 	e.GET("/stats/projects", s.viewProjectStats)
 	e.GET("/stats/models", s.viewModelStats)
 	e.GET("/stats/insights", s.viewInsights)
+	s.registerAPIRoutes()
 	return s
 }
 

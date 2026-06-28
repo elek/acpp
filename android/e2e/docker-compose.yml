@@ -1,0 +1,19 @@
+# Postgres for the Android e2e harness. Kept on host port 5433 (not the default
+# 5432) so it never clashes with a developer's own database. Data lives in tmpfs
+# so every `up` starts from an empty schema — acpp runs its migrations on connect.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: acpp
+      POSTGRES_PASSWORD: acpp
+      POSTGRES_DB: acpp
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acpp -d acpp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
