@@ -49,6 +49,21 @@ HOST_IP=192.168.1.42 android/e2e/run-e2e.sh
 
 Report: `android/app/build/reports/androidTests/connected/debug/index.html`.
 
+### Optional knobs
+
+```bash
+# Watch it run: pause ~1s after each UI step so a human can follow on-device.
+STEP_DELAY_MS=1000 android/e2e/run-e2e.sh
+
+# Keep the backend (postgres + acpp web + the adb reverse tunnel) up after the
+# test so you can keep poking at it by hand. Tear it down when done:
+KEEP_RUNNING=1 android/e2e/run-e2e.sh
+android/e2e/stop-backend.sh
+
+# Combine them — slow, observable run that leaves the stack up afterwards:
+STEP_DELAY_MS=1000 KEEP_RUNNING=1 android/e2e/run-e2e.sh
+```
+
 ## Manual testing
 
 ```bash

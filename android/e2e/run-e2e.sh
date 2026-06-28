@@ -15,6 +15,12 @@
 #
 #   HOST_IP=192.168.1.42 ./run-e2e.sh
 #
+# Optional knobs:
+#   STEP_DELAY_MS=1000   pause ~1s after each UI step so a human can follow along
+#   KEEP_RUNNING=1       leave postgres + acpp web (+ the adb reverse tunnel) up
+#                        after the test for further manual testing; tear it down
+#                        afterwards with ./stop-backend.sh
+#
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_common.sh
@@ -69,11 +75,24 @@ echo ">> device: $(adb devices | sed -n '2p')"
 # Wake and unlock the device. A dozing/locked screen means MainActivity never
 # composes, and the instrumented test fails immediately with "No compose
 # hierarchies found in the app". `dismiss-keyguard` only clears a non-secure
-# lock; a PIN/password must be removed (or the device unlocked) by hand.
+# lock; a PIN/pattern/password can't be cleared over adb.
 echo ">> waking device + dismissing keyguard"
 adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
 adb shell wm dismiss-keyguard           >/dev/null 2>&1 || true
 adb shell svc power stayon true          >/dev/null 2>&1 || true
+
+# If a secure keyguard is still up, the test can't see the UI. Wait for the
+# human to unlock it by hand rather than failing with the opaque Compose error.
+keyguard_up() { adb shell dumpsys window 2>/dev/null | grep -q 'isKeyguardShowing=true'; }
+if keyguard_up; then
+  echo ">> device is locked (secure keyguard) — UNLOCK IT BY HAND now (waiting up to 60s)…"
+  for _ in $(seq 1 60); do keyguard_up || break; sleep 1; done
+  if keyguard_up; then
+    echo "error: device still locked after 60s. Unlock the screen and re-run." >&2
+    exit 1
+  fi
+  echo ">> device unlocked"
+fi
 
 # Tunnel the device's loopback back to the host server over USB (unless a LAN
 # HOST_IP was given). Lets a real phone — not just an emulator — reach acpp.
@@ -89,10 +108,32 @@ adb uninstall net.anzix.acpp.test >/dev/null 2>&1 || true
 echo ">> running instrumented e2e"
 echo ">>   ACPP_BASE_URL=$BASE_URL"
 echo ">>   ACPP_PROJECT_DIR=$PROJECT_DIR"
+[ "${STEP_DELAY_MS:-0}" != 0 ] && echo ">>   ACPP_STEP_DELAY_MS=$STEP_DELAY_MS (human-paced)"
+set +e
 ( cd "$REPO_ROOT/android" && ./gradlew --console=plain :app:connectedDebugAndroidTest \
     -Pandroid.testInstrumentationRunnerArguments.ACPP_BASE_URL="$BASE_URL" \
-    -Pandroid.testInstrumentationRunnerArguments.ACPP_PROJECT_DIR="$PROJECT_DIR" )
+    -Pandroid.testInstrumentationRunnerArguments.ACPP_PROJECT_DIR="$PROJECT_DIR" \
+    -Pandroid.testInstrumentationRunnerArguments.ACPP_STEP_DELAY_MS="${STEP_DELAY_MS:-0}" )
+TEST_STATUS=$?
+set -e
 
+REPORT="android/app/build/reports/androidTests/connected/debug/index.html"
+
+if [ -n "${KEEP_RUNNING:-}" ]; then
+  trap - EXIT   # leave the stack up; the user tears it down when they're done
+  echo
+  [ "$TEST_STATUS" -eq 0 ] && echo ">> PASS" || echo ">> FAIL (exit $TEST_STATUS)"
+  echo ">> report: $REPORT"
+  echo
+  echo ">> KEEP_RUNNING set — backend left up for further testing:"
+  echo ">>   server:   $BASE_URL  (pid $SERVER_PID, log $RUN_DIR/server.log)"
+  echo ">>   project:  $PROJECT_DIR"
+  [ "$USE_REVERSE" = 1 ] && echo ">>   tunnel:   device 127.0.0.1:${SERVER_PORT} -> host (adb reverse)"
+  echo ">>   tear down with: $DIR/stop-backend.sh"
+  exit "$TEST_STATUS"
+fi
+
+[ "$TEST_STATUS" -eq 0 ] || exit "$TEST_STATUS"
 echo
 echo ">> PASS"
-echo ">> report: android/app/build/reports/androidTests/connected/debug/index.html"
+echo ">> report: $REPORT"
