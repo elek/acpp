@@ -43,6 +43,39 @@ func TestLoadProject_PartialFile(t *testing.T) {
 	require.Empty(t, pc.Sandbox.Profiles)
 }
 
+func TestLoadProject_Hooks(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `
+agent: claude-code-acp
+hooks:
+  - type: commit
+  - type: qdrant
+    url: http://localhost:6333
+    collection: acpp
+`)
+
+	pc, err := LoadProject(dir)
+	require.NoError(t, err)
+	require.Len(t, pc.Hooks, 2)
+
+	require.Equal(t, "commit", pc.Hooks[0].Type)
+	require.Empty(t, pc.Hooks[0].Params)
+
+	require.Equal(t, "qdrant", pc.Hooks[1].Type)
+	require.Equal(t, map[string]string{
+		"url":        "http://localhost:6333",
+		"collection": "acpp",
+	}, pc.Hooks[1].Params)
+}
+
+func TestLoadProject_HookMissingType(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "hooks:\n  - url: http://localhost\n")
+
+	_, err := LoadProject(dir)
+	require.Error(t, err)
+}
+
 func TestLoadProject_MalformedYAML(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "agent: [unterminated\n")

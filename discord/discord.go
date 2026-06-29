@@ -16,9 +16,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/acp/helpers"
-	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/router"
-	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 	"github.com/pkg/errors"
 )
@@ -37,12 +35,8 @@ type DiscordChannel struct {
 	ctx     context.Context
 
 	// agent is the default agent command for conversations this bot starts,
-	// used unless a project's .acpp.yaml overrides it.
+	// used unless a project's .acpp.yaml overrides it (resolved by Router.Create).
 	agent string
-	// cfg is the global config, consulted for per-project defaults: it resolves a
-	// project's .acpp.yaml agent against AgentPath and provides the fallback
-	// sandbox type (Defaults.Sandbox).
-	cfg *config.Config
 	// searchPaths are the base directories searched for a project directory
 	// matching a Discord channel's name.
 	searchPaths []string
@@ -79,8 +73,8 @@ var _ RenderSink = (*DiscordChannel)(nil)
 // subscribes it to the router so it renders every conversation's updates. agent
 // is the default agent command for conversations this bot starts; searchPaths
 // are the base directories searched for a project directory matching a channel's
-// name; cfg supplies per-project defaults (see .acpp.yaml handling).
-func NewDiscordChannel(token string, agent string, searchPaths []string, cfg *config.Config, r *router.Router) (*DiscordChannel, error) {
+// name. Per-project defaults (.acpp.yaml) are resolved centrally by Router.Create.
+func NewDiscordChannel(token string, agent string, searchPaths []string, r *router.Router) (*DiscordChannel, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -91,7 +85,6 @@ func NewDiscordChannel(token string, agent string, searchPaths []string, cfg *co
 		router:           r,
 		ctx:              context.Background(),
 		agent:            agent,
-		cfg:              cfg,
 		searchPaths:      searchPaths,
 		convByChannel:    make(map[string]types.ConversationMeta),
 		channelByProject: make(map[string]string),
@@ -305,25 +298,13 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 		return types.ConversationMeta{}, errors.Errorf("no project directory named %q found in search paths", name)
 	}
 
-	pc, err := config.LoadProject(cwd)
-	if err != nil {
-		return types.ConversationMeta{}, errors.Wrapf(err, "loading %s for %q", config.ProjectFile, name)
-	}
-	agent, sandboxType, profiles := resolveProjectDefaults(pc, c.agent, c.cfg)
-
+	// Agent, sandbox and hooks are resolved centrally from the project's
+	// .acpp.yaml by Router.Create; c.agent is the bot default it falls back to.
 	opts := types.SessionOpts{
-		ProjectID:   name,
-		Agent:       agent,
-		CWD:         cwd,
-		Source:      "discord",
-		SandboxType: sandboxType,
-	}
-	if sandboxType != "" {
-		sb, err := sandbox.ResolveSandbox(sandboxType, profiles, cwd)
-		if err != nil {
-			return types.ConversationMeta{}, errors.Wrapf(err, "resolving sandbox for %q", name)
-		}
-		opts.Sandbox = sb
+		ProjectID: name,
+		Agent:     c.agent,
+		CWD:       cwd,
+		Source:    "discord",
 	}
 
 	id, err := c.router.Create(c.ctx, opts)
@@ -336,22 +317,6 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 	c.channelByProject[id.ProjectID] = channelID
 	c.mu.Unlock()
 	return id, nil
-}
-
-// resolveProjectDefaults applies a project's .acpp.yaml over the bot's defaults,
-// returning the agent command, sandbox type, and sandbox profiles to use. A
-// file-provided agent is resolved against AgentPath; an unset agent or sandbox
-// falls back to the bot default and cfg.Defaults.Sandbox respectively.
-func resolveProjectDefaults(pc config.ProjectConfig, defaultAgent string, cfg *config.Config) (agent, sandboxType, profiles string) {
-	agent = defaultAgent
-	if pc.Agent != "" {
-		agent = cfg.ResolveAgent(pc.Agent)
-	}
-	sandboxType = pc.Sandbox.Name
-	if sandboxType == "" {
-		sandboxType = cfg.Defaults.Sandbox
-	}
-	return agent, sandboxType, pc.Sandbox.Profiles
 }
 
 // findProjectDir searches searchPaths for a directory named name and returns its

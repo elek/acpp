@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/router"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +41,7 @@ func TestTextCommands_E2E(t *testing.T) {
 	rt := router.New()
 	defer rt.Close()
 
-	bot, err := NewDiscordChannel(token, bin, nil, config.DefaultConfig(), rt)
+	bot, err := NewDiscordChannel(token, bin, nil, rt)
 	require.NoError(t, err)
 	defer bot.Close()
 

@@ -16,7 +16,10 @@ import (
 	"sync"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/hook"
 	"github.com/elek/acpp/process"
+	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 	"github.com/google/uuid"
 )
@@ -28,6 +31,10 @@ type Router struct {
 	procs  *process.Manager
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// cfg supplies defaults used when resolving a conversation's .acpp.yaml at
+	// Create time (agent, sandbox). Never nil — New defaults it to an empty config.
+	cfg *config.Config
 
 	// shutdown, if set via OnShutdown, is invoked by the /exit command to bring
 	// the whole application down (typically the main context's cancel func).
@@ -42,15 +49,34 @@ type Router struct {
 	subscribers []Subscriber
 }
 
+// Option configures a Router at construction.
+type Option func(*Router)
+
+// WithConfig supplies the global config used to resolve per-conversation
+// .acpp.yaml defaults (agent, sandbox) at Create time. Without it the router
+// resolves against an empty config.
+func WithConfig(cfg *config.Config) Option {
+	return func(r *Router) {
+		if cfg != nil {
+			r.cfg = cfg
+		}
+	}
+}
+
 // New creates a Router with its own dedicated process manager.
-func New() *Router {
+func New(opts ...Option) *Router {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Router{
+	r := &Router{
 		procs:    process.NewManager(),
 		ctx:      ctx,
 		cancel:   cancel,
+		cfg:      &config.Config{},
 		sessions: make(map[string]*SessionState),
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 type SessionState struct {
@@ -76,6 +102,11 @@ type SessionState struct {
 	// them — they are absent from the initialize/session-new responses). Used by
 	// /help; replaced on each update and cleared on Restart. Guarded by Router.mu.
 	availableCommands []acp.AvailableCommand
+	// hooks are this conversation's message-transform hooks, instantiated from the
+	// project's .acpp.yaml at Create. Each conversation has its own instances so
+	// hook state (e.g. commit's hasCommitted) is independent. Immutable after
+	// Create, so safe to read without the lock.
+	hooks []hook.Hook
 }
 
 // OnShutdown registers the cancel function the /exit command invokes to shut the
@@ -102,6 +133,11 @@ func (r *Router) Subscribe(s Subscriber) {
 // need it can block via WaitReady). The subprocess is bound to the router's
 // lifetime (not ctx).
 func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.ConversationMeta, error) {
+	hooks, err := r.resolveProject(&opts)
+	if err != nil {
+		return types.ConversationMeta{}, err
+	}
+
 	ps, err := r.procs.Start(r.ctx, process.Spec{
 		Agent:   opts.Agent,
 		Cwd:     opts.CWD,
@@ -123,6 +159,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		proc:  ps,
 		opts:  opts,
 		ready: make(chan struct{}),
+		hooks: hooks,
 	}
 
 	r.mu.Lock()
@@ -160,6 +197,53 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	}
 
 	return meta, nil
+}
+
+// resolveProject loads the conversation's .acpp.yaml (from opts.CWD) and folds it
+// over opts: the project file's agent and sandbox win over the caller's, which in
+// turn win over the global config defaults. It also instantiates the project's
+// hooks. Centralizing this here means .acpp.yaml is honored by every channel that
+// creates a conversation, not just one. A missing file is not an error.
+func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
+	pc, err := config.LoadProject(opts.CWD)
+	if err != nil {
+		return nil, err
+	}
+
+	// Agent: project file > caller > config default, then resolved against AgentPath.
+	agent := opts.Agent
+	if pc.Agent != "" {
+		agent = pc.Agent
+	}
+	if agent == "" {
+		agent = r.cfg.Defaults.Agent
+	}
+	opts.Agent = r.cfg.ResolveAgent(agent)
+
+	// Sandbox: only resolve when the caller has not already built one. Project
+	// file > caller's type > config default.
+	if opts.Sandbox == nil {
+		sbType, profiles := opts.SandboxType, ""
+		if pc.Sandbox.Name != "" {
+			sbType, profiles = pc.Sandbox.Name, pc.Sandbox.Profiles
+		} else if sbType == "" {
+			sbType = r.cfg.Defaults.Sandbox
+		}
+		if sbType != "" {
+			sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD)
+			if err != nil {
+				return nil, fmt.Errorf("router: resolving sandbox %q: %w", sbType, err)
+			}
+			opts.Sandbox = sb
+			opts.SandboxType = sbType
+		}
+	}
+
+	hooks, err := hook.Build(pc.Hooks)
+	if err != nil {
+		return nil, err
+	}
+	return hooks, nil
 }
 
 // onMessage receives every inbound ACP message for a conversation. It drives the
@@ -210,7 +294,7 @@ func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMess
 		// update logs arrive). The meta already carries the freshly assigned
 		// SessionID; subscribers needing the creation options fetch them via
 		// Router.Opts.
-		r.Receive(ctx, rid, meta, m)
+		r.deliver(ctx, state, rid, meta, m)
 		if ready != nil {
 			close(ready)
 		}
@@ -228,7 +312,7 @@ func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMess
 			}
 		}
 		r.mu.Unlock()
-		r.Receive(ctx, rid, meta, msg)
+		r.deliver(ctx, state, rid, meta, msg)
 	}
 }
 
@@ -363,8 +447,80 @@ func (r *Router) Send(ctx context.Context, id types.ConversationMeta, msg any) e
 	if !ok {
 		return fmt.Errorf("router: unknown conversation %v", id)
 	}
+	return r.dispatch(ctx, state, meta, msg, true)
+}
+
+// dispatch fans a client->agent message out to subscribers and sends it to the
+// agent. When applyOutgoing is set, each hook's Outgoing runs first and may
+// rewrite the message or drop it (returning nil). Trigger-injected prompts call
+// dispatch with applyOutgoing=false so a hook cannot re-trigger itself in a loop.
+func (r *Router) dispatch(ctx context.Context, state *SessionState, meta types.ConversationMeta, msg any, applyOutgoing bool) error {
+	if applyOutgoing {
+		hc := hook.HookContext{
+			Meta: meta,
+			CWD:  state.opts.CWD,
+			Trigger: func(prompt string) error {
+				return r.triggerPrompt(ctx, state, prompt)
+			},
+		}
+		for _, h := range state.hooks {
+			msg = h.Outgoing(hc, msg)
+			if msg == nil {
+				return nil
+			}
+		}
+	}
 	r.Receive(ctx, nil, meta, msg)
 	return state.connection.Send(ctx, msg)
+}
+
+// triggerPrompt submits a hook-injected follow-up prompt through the dispatch
+// pipeline (fan-out + send) using the conversation's current SessionID, bypassing
+// Outgoing to avoid re-entrancy.
+func (r *Router) triggerPrompt(ctx context.Context, state *SessionState, prompt string) error {
+	r.mu.RLock()
+	meta := state.meta
+	r.mu.RUnlock()
+	req := acp.PromptRequest{
+		SessionId: meta.SessionID,
+		Prompt:    []acp.ContentBlock{acp.TextBlock(prompt)},
+	}
+	return r.dispatch(ctx, state, meta, req, false)
+}
+
+// deliver runs an agent->subscriber message through each hook's Incoming, fans the
+// (possibly rewritten) result out to subscribers, then flushes any follow-up
+// prompts the hooks requested via Trigger. Triggers are deferred until after the
+// current message is delivered so subscribers see strictly in-order events:
+// [turn updates] -> [response] -> [follow-up prompt].
+func (r *Router) deliver(ctx context.Context, state *SessionState, rid *json.RawMessage, meta types.ConversationMeta, msg any) {
+	if state == nil || len(state.hooks) == 0 {
+		r.Receive(ctx, rid, meta, msg)
+		return
+	}
+	var pending []string
+	hc := hook.HookContext{
+		Meta: meta,
+		CWD:  state.opts.CWD,
+		Trigger: func(prompt string) error {
+			pending = append(pending, prompt)
+			return nil
+		},
+	}
+	for _, h := range state.hooks {
+		msg = h.Incoming(hc, msg)
+		if msg == nil {
+			break
+		}
+	}
+	if msg != nil {
+		r.Receive(ctx, rid, meta, msg)
+	}
+	for _, prompt := range pending {
+		if err := r.triggerPrompt(ctx, state, prompt); err != nil {
+			slog.Error("router: hook trigger failed", "conversation_id", meta.ConversationID, "error", err)
+		}
+	}
 }
 
 // CloseConversation shuts down the subprocess backing a single conversation and

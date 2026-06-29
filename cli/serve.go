@@ -67,7 +67,7 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	defer store.Close()
 
 	// One router, shared by both surfaces.
-	rt := router.New()
+	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
 
@@ -81,7 +81,7 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	persistence.New(rt, store)
 
 	// Discord: each channel maps to a conversation on the shared router.
-	dc, err := discord.NewDiscordChannel(token, agent, searchPaths, cfg, rt)
+	dc, err := discord.NewDiscordChannel(token, agent, searchPaths, rt)
 	if err != nil {
 		return errors.Wrap(err, "starting Discord integration")
 	}

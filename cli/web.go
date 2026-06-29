@@ -41,7 +41,7 @@ func (w *Web) Run(kctx *kong.Context) error {
 	}
 	defer store.Close()
 
-	rt := router.New()
+	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
 

@@ -18,6 +18,38 @@ type ProjectConfig struct {
 	// Agent overrides the agent command used for the project's conversation.
 	Agent   string         `yaml:"agent,omitempty"`
 	Sandbox ProjectSandbox `yaml:"sandbox,omitempty"`
+	// Hooks are the message-transform hooks attached to the project's
+	// conversations, in order. See the hook package.
+	Hooks []HookConfig `yaml:"hooks,omitempty"`
+}
+
+// HookConfig configures a single hook. Type selects the registered hook
+// implementation; Params carries every other YAML key as a string, delivered
+// verbatim to the hook factory.
+type HookConfig struct {
+	Type   string
+	Params map[string]string
+}
+
+// UnmarshalYAML reads a hook entry as a flat map: the `type` key becomes Type,
+// and every remaining key is folded into Params as a string. This lets hooks
+// declare arbitrary params without a fixed schema, e.g.
+//
+//	- type: qdrant
+//	  url: http://localhost:6333
+//	  collection: acpp
+func (h *HookConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw map[string]string
+	if err := value.Decode(&raw); err != nil {
+		return errors.Wrap(err, "decoding hook config")
+	}
+	h.Type = raw["type"]
+	if h.Type == "" {
+		return errors.New("hook config missing required 'type' field")
+	}
+	delete(raw, "type")
+	h.Params = raw
+	return nil
 }
 
 // ProjectSandbox configures the sandbox for a project's conversation.

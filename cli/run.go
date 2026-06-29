@@ -12,6 +12,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/permission"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
@@ -39,7 +40,12 @@ func (r *Run) Run(kctx *kong.Context) error {
 		return err
 	}
 
-	rt := router.New()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 
 	// Auto-approve every permission request the agent issues.

@@ -55,7 +55,7 @@ func (d *Discord) Run(kctx *kong.Context) error {
 		searchPaths = cfg.SearchPath
 	}
 
-	rt := router.New()
+	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
 
@@ -63,7 +63,7 @@ func (d *Discord) Run(kctx *kong.Context) error {
 	permission.NewAllowAll(rt)
 	rt.Subscribe(router.Debug)
 
-	dc, err := discord.NewDiscordChannel(token, agent, searchPaths, cfg, rt)
+	dc, err := discord.NewDiscordChannel(token, agent, searchPaths, rt)
 	if err != nil {
 		return errors.Wrap(err, "starting Discord integration")
 	}
