@@ -98,6 +98,15 @@ func (s *PostgresStore) InsertSession(ctx context.Context, id, sourceName, agent
 		return errors.Wrap(err, "marshaling env")
 	}
 
+	// A session can't exist without its project: ensure the project row exists so
+	// the project_name foreign key is satisfied. Ad-hoc sessions (run/cat/web with
+	// ProjectID set to a cwd) otherwise have no project row created for them.
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO project (name) VALUES ($1)
+		ON CONFLICT (name) DO NOTHING`, projectName); err != nil {
+		return errors.Wrap(err, "ensuring project")
+	}
+
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO session (id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,

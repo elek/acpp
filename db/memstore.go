@@ -52,6 +52,14 @@ func (m *MemStore) CompleteRunningSessions(ctx context.Context) (int64, error) {
 func (m *MemStore) InsertSession(ctx context.Context, id, sourceName, agent, dir, sandbox, node, gitCommit, projectName string, env []string, createdAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Mirror PostgresStore: a session implies its project exists.
+	if _, ok := m.projects[projectName]; !ok {
+		m.projects[projectName] = ProjectRow{
+			Name:      projectName,
+			CreatedAt: createdAt,
+			UpdatedAt: createdAt,
+		}
+	}
 	envJSON, _ := json.Marshal(env)
 	m.sessions[id] = SessionRow{
 		ID:          id,
