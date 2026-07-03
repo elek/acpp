@@ -110,22 +110,33 @@ func splitMessage(s string) []string {
 	return chunks
 }
 
-// stripCodeBlockLanguage removes the language identifier from markdown code
-// block fences (e.g., "```yaml\n..." becomes "```\n..."). Discord doesn't
-// render language-specific syntax highlighting, so the identifier is noise.
+// stripCodeBlockLanguage removes the language identifier from every opening
+// markdown code-block fence in s (e.g., "```yaml\n..." becomes "```\n...").
+// Discord doesn't render language-specific syntax highlighting, and some
+// clients fail to detect the block at all when an unknown identifier follows
+// the fence, so the identifier is noise. Fences may appear anywhere in s (not
+// just at the start), and s may contain multiple blocks.
 func stripCodeBlockLanguage(s string) string {
-	if !strings.HasPrefix(s, "```") {
-		return s
+	lines := strings.Split(s, "\n")
+	inCodeBlock := false
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "```") {
+			continue
+		}
+		if inCodeBlock {
+			// Closing fence - leave as-is.
+			inCodeBlock = false
+			continue
+		}
+		// Opening fence - drop anything after the run of backticks.
+		inCodeBlock = true
+		n := 0
+		for n < len(line) && line[n] == '`' {
+			n++
+		}
+		lines[i] = line[:n]
 	}
-	newline := strings.Index(s, "\n")
-	if newline == -1 {
-		return s
-	}
-	fence := s[:newline]
-	if fence == "```" {
-		return s
-	}
-	return "```" + s[newline:]
+	return strings.Join(lines, "\n")
 }
 
 // formatToolUsage renders a tool-call into a Discord message string.

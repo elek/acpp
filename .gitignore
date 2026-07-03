@@ -1,7 +1,7 @@
-replay
-acpp
-log
-prompts
+/replay
+/acpp
+/log
+/prompts
 *.txt
 .pnpm-debug.log
 desktop/desktop

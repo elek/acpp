@@ -1,0 +1,19 @@
+# ACPP server config for the Android e2e harness.
+#
+# This is a TEMPLATE. The start scripts (start-backend.sh / run-e2e.sh) substitute
+# the __PLACEHOLDERS__ and write the result to android/e2e/.run/acpp/config.yaml,
+# then launch the server with XDG_CONFIG_HOME=android/e2e/.run. Nothing here is
+# machine-specific, and your real ~/.config/acpp is never touched.
+database:
+  dsn: "__DB_DSN__"
+web_addr: "__WEB_ADDR__"
+defaults:
+  # The deterministic, API-key-free fake agent: `rai acp fake`.
+  agent: "__AGENT__"
+  # Run the agent directly — no bwrap sandbox for the test. ("none" is required;
+  # an empty value defaults to bbwrap.)
+  sandbox: none
+agent_path:
+  - __GO_BIN__
+search_path:
+  - __PROJECTS_DIR__

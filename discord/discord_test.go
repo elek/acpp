@@ -29,3 +29,26 @@ func TestUnwrapBacktickCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestStripCodeBlockLanguage(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"block at start", "```yaml\nfoo: bar\n```", "```\nfoo: bar\n```"},
+		{"no language untouched", "```\nfoo: bar\n```", "```\nfoo: bar\n```"},
+		{"text before block", "config:\n```yaml\nfoo: bar\n```", "config:\n```\nfoo: bar\n```"},
+		{"multiple blocks", "```yaml\na\n```\ntext\n```json\n{}\n```", "```\na\n```\ntext\n```\n{}\n```"},
+		{"plain text untouched", "hello world", "hello world"},
+		{"backticks inside body untouched", "```go\nx := `raw`\n```", "```\nx := `raw`\n```"},
+		{"four backtick fence", "````md\ncontent\n````", "````\ncontent\n````"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripCodeBlockLanguage(tc.in); got != tc.want {
+				t.Errorf("stripCodeBlockLanguage(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

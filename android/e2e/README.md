@@ -21,12 +21,20 @@ The instrumented test lives at
 
 ## What the test does
 
-Setup screen → enter server URL → **Connect** → Projects → **New** session in
-`projects/demo` → type `hello` → **Send** → wait for the agent's reply bubble.
+1. Setup screen → enter server URL → **Connect** → Projects → **New** session in
+   `projects/demo` → type `hello` → **Send** → wait for the agent's reply bubble.
+2. Overflow menu → **Clear** (sends `/clear`, so the backend replaces the
+   session and the UI navigates to a fresh, empty conversation) → type
+   `[scenario1 count=5]` → **Send**.
 
-`rai acp fake` emits *random* words, so the assertions are **structural** (the
-user message echoes, a non-empty assistant bubble appears) — never on the reply
-text.
+`rai acp fake` emits *random* words for a plain prompt, so those assertions are
+**structural** (the user message echoes, a non-empty assistant bubble appears) —
+never on the reply text.
+
+The `[scenario1 count=5]` directive is **deterministic**: the fake agent runs 5
+iterations, each performing a `create` then a `cat` tool call. The second
+conversation therefore asserts the exact shape — precisely 10 tool-call rows in
+`create, cat, …` order, all rendered below the single user prompt.
 
 ## Prerequisites
 
