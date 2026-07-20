@@ -101,9 +101,15 @@ func (s *PostgresStore) InsertSession(ctx context.Context, id, sourceName, agent
 	// A session can't exist without its project: ensure the project row exists so
 	// the project_name foreign key is satisfied. Ad-hoc sessions (run/cat/web with
 	// ProjectID set to a cwd) otherwise have no project row created for them.
+	//
+	// Record the session's dir on the project too: the web UI resolves a project's
+	// working directory from project.dir (to start further sessions from the
+	// /projects view), so a project first created here must not be left dir-less.
+	// Backfill an empty dir but never overwrite one already set.
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO project (name) VALUES ($1)
-		ON CONFLICT (name) DO NOTHING`, projectName); err != nil {
+		INSERT INTO project (name, dir) VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE
+		SET dir = COALESCE(NULLIF(project.dir, ''), EXCLUDED.dir)`, projectName, dir); err != nil {
 		return errors.Wrap(err, "ensuring project")
 	}
 

@@ -164,8 +164,8 @@
       {{if .ActiveSession}}
       <span class="session-status status-{{.ActiveSession.Status}}">{{.ActiveSession.Status}}</span>
       {{if or (eq .ActiveSession.Status "running") (eq .ActiveSession.Status "pending")}}
-      <form method="POST" action="/session/{{.ActiveSession.ID}}/stop" style="display:inline;margin:0">
-        <button type="submit" class="stop-btn">Stop</button>
+      <form id="stop-form" method="POST" action="/session/{{.ActiveSession.ID}}/stop" style="display:inline;margin:0">
+        <button type="submit" class="stop-btn" id="stop-btn">Stop</button>
       </form>
       {{end}}
       <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
@@ -223,6 +223,7 @@
       <div class="prompt-bar-inner">
         <textarea id="prompt-input" placeholder="Send a prompt..." rows="1"></textarea>
         <button id="prompt-cancel" class="prompt-cancel" style="display:none">Cancel</button>
+        <button id="prompt-new-session" class="prompt-send" style="display:none">New session</button>
         <button id="prompt-send" class="prompt-send">Send</button>
       </div>
       <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline</div>
@@ -590,13 +591,26 @@
   var input = document.getElementById('prompt-input');
   var btn = document.getElementById('prompt-send');
   var cancelBtn = document.getElementById('prompt-cancel');
+  var newSessionBtn = document.getElementById('prompt-new-session');
 
   function updateCancelButton() {
     if (cancelBtn) {
       cancelBtn.style.display = (sessionId && isSessionRunning) ? '' : 'none';
     }
   }
-  updateCancelButton();
+
+  // updatePromptBarMode reflects the session state in the prompt bar. When a
+  // session exists but is no longer running (e.g. it was stopped), the Send and
+  // Cancel buttons disappear and a "New session" button takes their place; the
+  // text area always remains. With no session (fresh project) or a running
+  // session, Send is shown so a prompt can be sent (creating a session if none).
+  function updatePromptBarMode() {
+    var stopped = !!(sessionId && !isSessionRunning);
+    if (btn) btn.style.display = stopped ? 'none' : '';
+    if (newSessionBtn) newSessionBtn.style.display = stopped ? '' : 'none';
+    updateCancelButton();
+  }
+  updatePromptBarMode();
 
   if (input && btn) {
     var sending = false;
@@ -693,7 +707,7 @@
           // Switch to the new session in-place
           sessionId = data.id;
           isSessionRunning = true;
-          updateCancelButton();
+          updatePromptBarMode();
 
           // Reset rendering state
           assistantText = '';
@@ -754,6 +768,87 @@
     }
 
     btn.addEventListener('click', sendPrompt);
+
+    // "New session" starts a fresh session in place (no prompt yet) and returns
+    // the prompt bar to normal Send mode so the next message goes to it.
+    function startNewSession() {
+      if (!(creatorEnabled && activeDir) || sending) return;
+      sending = true;
+      newSessionBtn.disabled = true;
+      newSessionBtn.textContent = 'Creating...';
+      fetch('/projects/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: activeDir })
+      }).then(function(r) {
+        if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
+        return r.json();
+      }).then(function(data) {
+        sessionId = data.id;
+        isSessionRunning = true;
+
+        // Reset rendering state for the fresh session.
+        assistantText = '';
+        thoughtText = '';
+        toolCalls = {};
+        liveAssistantDiv = null;
+        liveThoughtDiv = null;
+        container.innerHTML = '';
+
+        history.pushState(null, '', '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(sessionId));
+
+        var statusEl = document.querySelector('.session-bar .session-status');
+        if (statusEl) {
+          statusEl.className = 'session-status status-running';
+          statusEl.textContent = 'running';
+        }
+        if (sessionSelect) {
+          var opt = document.createElement('option');
+          opt.value = sessionId;
+          opt.textContent = 'New session — running';
+          opt.selected = true;
+          sessionSelect.insertBefore(opt, sessionSelect.firstChild);
+        }
+
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        connectWebSocket();
+        updatePromptBarMode();
+        input.focus();
+      }).catch(function(err) {
+        alert('Failed to create session: ' + err.message);
+      }).finally(function() {
+        sending = false;
+        newSessionBtn.disabled = false;
+        newSessionBtn.textContent = 'New session';
+      });
+    }
+
+    if (newSessionBtn) newSessionBtn.addEventListener('click', startNewSession);
+
+    // Stopping ends the session. Drive the prompt-bar state from the click
+    // directly (rather than a full-page reload that races the server-side status
+    // finalization): hide the Stop button and switch to "New session" mode.
+    var stopForm = document.getElementById('stop-form');
+    if (stopForm) {
+      stopForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var stopBtn = document.getElementById('stop-btn');
+        if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; }
+        fetch(stopForm.action, { method: 'POST' }).then(function() {
+          isSessionRunning = false;
+          stopForm.style.display = 'none';
+          var statusEl = document.querySelector('.session-bar .session-status');
+          if (statusEl) {
+            statusEl.className = 'session-status status-complete';
+            statusEl.textContent = 'stopped';
+          }
+          updatePromptBarMode();
+        }).catch(function(err) {
+          alert('Failed to stop: ' + err.message);
+          if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = 'Stop'; }
+        });
+      });
+    }
 
     if (cancelBtn) {
       cancelBtn.addEventListener('click', function() {

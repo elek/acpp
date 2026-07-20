@@ -1,0 +1,18 @@
+# PostgreSQL for the web e2e suite. Off-default host port (5434) so it never
+# collides with a developer's own postgres (5432) or the android e2e db (5433).
+# No named volume: the database is ephemeral, so every `up` after a `down -v`
+# starts empty — the "empty database" guarantee the suite relies on.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: acpp
+      POSTGRES_PASSWORD: acpp
+      POSTGRES_DB: acpp
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acpp -d acpp"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
