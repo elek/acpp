@@ -41,6 +41,15 @@ func (w *Web) Run(kctx *kong.Context) error {
 	}
 	defer store.Close()
 
+	// Any conversation still marked running/pending belongs to a previous process
+	// that exited without finalizing it. Mark them complete on startup so stale
+	// sessions from earlier runs don't linger as active.
+	if n, err := store.CompleteRunningSessions(ctx); err != nil {
+		return errors.Wrap(err, "completing stale sessions from previous run")
+	} else if n > 0 {
+		slog.Info("marked stale sessions from previous run as complete", "count", n)
+	}
+
 	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
