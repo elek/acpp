@@ -196,6 +196,11 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		return types.ConversationMeta{}, err
 	}
 
+	// Finalize the conversation if the subprocess ever exits without a deliberate
+	// close, so a lost turn completion can never wedge the conversation (or a
+	// scheduled job) forever.
+	go r.watchProcess(convID, ps)
+
 	return meta, nil
 }
 
@@ -527,6 +532,19 @@ func (r *Router) deliver(ctx context.Context, state *SessionState, rid *json.Raw
 // removes it from the router, leaving every other conversation running. It is a
 // no-op for an unknown id.
 func (r *Router) CloseConversation(id types.ConversationMeta) {
+	r.closeConversation(id, "")
+}
+
+// closeConversation removes a conversation and fans a ConversationClosed to
+// subscribers so they can finalize per-conversation state before the process
+// dies. errMsg, when non-empty, marks the close as abnormal (the agent
+// subprocess exited before completing its turn) so subscribers finalize
+// accordingly — the persister records the session as errored rather than
+// complete, and the scheduler releases the job that started it. The guarded
+// delete makes it safe for concurrent callers (a deliberate close racing the
+// subprocess-exit watcher): only the caller that removes the conversation fans
+// the event. It is a no-op for an unknown id.
+func (r *Router) closeConversation(id types.ConversationMeta, errMsg string) {
 	r.mu.Lock()
 	state, ok := r.sessions[id.ConversationID]
 	if ok {
@@ -537,10 +555,41 @@ func (r *Router) CloseConversation(id types.ConversationMeta) {
 		return
 	}
 	// Let subscribers finalize per-conversation state before the process dies.
-	r.Receive(r.ctx, nil, state.meta, types.ConversationClosed{Meta: state.meta})
+	r.Receive(r.ctx, nil, state.meta, types.ConversationClosed{Meta: state.meta, Err: errMsg})
 	if state.proc != nil {
 		state.proc.Close()
 	}
+}
+
+// watchProcess finalizes a conversation whose agent subprocess exits before the
+// conversation is closed deliberately. A normal close (CloseConversation/Close)
+// removes the conversation from the map first, so by the time the process dies
+// the lookup here finds nothing and this is a no-op. An unexpected exit — a
+// crash, an OOM-kill, or the agent quitting without ever sending its
+// session/prompt response — otherwise leaves the conversation registered
+// forever: Active stays true, its session row is stuck 'pending', and a
+// scheduled job that started it never releases (every later tick is skipped as
+// "previous run still active"). Fanning an errored ConversationClosed lets every
+// subscriber finalize.
+func (r *Router) watchProcess(convID string, ps *process.Process) {
+	select {
+	case <-ps.Done():
+	case <-r.ctx.Done():
+		return
+	}
+	r.mu.RLock()
+	state, ok := r.sessions[convID]
+	var meta types.ConversationMeta
+	if ok {
+		meta = state.meta
+	}
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	slog.Warn("agent subprocess exited before its conversation was closed; finalizing",
+		"conversation_id", convID, "pid", meta.ProcessPID)
+	r.closeConversation(meta, "agent subprocess exited before completing the turn")
 }
 
 // Close shuts every conversation's subprocess down gracefully and releases the
@@ -549,16 +598,17 @@ func (r *Router) Close() {
 	// Graceful first (stdin EOF -> wait -> SIGTERM per process), then cancel the
 	// router context as a backstop for anything still bound to it.
 	r.procs.CloseAll()
-	r.mu.Lock()
+	r.mu.RLock()
 	metas := make([]types.ConversationMeta, 0, len(r.sessions))
 	for _, state := range r.sessions {
 		metas = append(metas, state.meta)
 	}
-	r.sessions = make(map[string]*SessionState)
-	r.mu.Unlock()
-	// Finalize each conversation for subscribers before tearing the context down.
+	r.mu.RUnlock()
+	// Finalize each conversation through the guarded path so subscribers see
+	// exactly one ConversationClosed per conversation even though CloseAll above
+	// has woken every subprocess-exit watcher, which races us to finalize.
 	for _, meta := range metas {
-		r.Receive(r.ctx, nil, meta, types.ConversationClosed{Meta: meta})
+		r.closeConversation(meta, "")
 	}
 	r.cancel()
 }

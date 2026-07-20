@@ -221,6 +221,32 @@ func TestScheduler_RunJobClosesConversation(t *testing.T) {
 	require.False(t, conv.Active(conv.closed[0]), "job conversation should have been closed")
 }
 
+func TestScheduler_ConversationClosedReleasesJob(t *testing.T) {
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "test.md")
+	require.NoError(t, os.WriteFile(promptFile, []byte("test prompt"), 0644))
+
+	conv := newFakeConversations()
+	cfg := &config.Config{Defaults: config.Defaults{Agent: "stub"}}
+	s := NewScheduler(conv, cfg, db.NewMemStore())
+
+	job := config.ScheduledJob{Name: "closed-test", Prompt: promptFile, Dir: dir}
+	s.runJob(job)
+	require.Len(t, conv.created, 1)
+	s.mu.Lock()
+	require.True(t, s.running["closed-test"])
+	s.mu.Unlock()
+
+	// The agent subprocess dies before the turn completes, so the router fans a
+	// ConversationClosed instead of a PromptResponse. The job must still be freed
+	// (otherwise every future tick is skipped as "previous run still active").
+	s.Receive(context.Background(), nil, conv.created[0], types.ConversationClosed{Meta: conv.created[0]})
+
+	s.mu.Lock()
+	require.False(t, s.running["closed-test"], "job must be released when its conversation closes")
+	s.mu.Unlock()
+}
+
 func TestScheduler_ReuseSession(t *testing.T) {
 	dir := t.TempDir()
 	promptFile := filepath.Join(dir, "test.md")

@@ -142,3 +142,48 @@ func TestCloseConversationFansClosed(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, meta.SessionID, got[0].Meta.SessionID)
 }
+
+// TestConversationFinalizedOnSubprocessExit verifies that when an agent
+// subprocess exits on its own (crash, OOM-kill, quitting mid-turn without
+// sending a session/prompt response) the router finalizes the conversation: it
+// fans an errored ConversationClosed and drops the conversation so it is no
+// longer Active. Without this a scheduled job that started the conversation
+// would wait forever for a PromptResponse that can never arrive.
+func TestConversationFinalizedOnSubprocessExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rt := New()
+	defer rt.Close()
+
+	got := make(chan types.ConversationClosed, 1)
+	rt.Subscribe(func(_ context.Context, _ *json.RawMessage, _ types.ConversationMeta, msg any) {
+		if c, ok := msg.(types.ConversationClosed); ok {
+			select {
+			case got <- c:
+			default:
+			}
+		}
+	})
+
+	// A fake agent that lives briefly (so Create registers the conversation) then
+	// exits without ever speaking ACP: no PromptResponse will ever arrive.
+	id, err := rt.Create(ctx, types.SessionOpts{
+		ProjectID: "t",
+		Agent:     "/bin/sh -c 'sleep 0.2'",
+		CWD:       "/",
+	})
+	require.NoError(t, err)
+	require.True(t, rt.Active(id.ConversationID))
+
+	select {
+	case c := <-got:
+		require.Equal(t, id.ConversationID, c.Meta.ConversationID)
+		require.NotEmpty(t, c.Err, "a subprocess-exit close must be marked as an error")
+	case <-ctx.Done():
+		t.Fatal("router did not fan ConversationClosed after the subprocess exited")
+	}
+
+	require.False(t, rt.Active(id.ConversationID),
+		"conversation should be dropped once its subprocess exits")
+}

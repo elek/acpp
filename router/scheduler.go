@@ -69,11 +69,21 @@ func NewScheduler(conv conversations, cfg *config.Config, projects db.ProjectSto
 	}
 }
 
-// Receive is the router.Subscriber hook: a conversation's PromptResponse marks
-// the end of a scheduled turn, so the scheduler closes the conversation (unless
-// the job reuses it) and releases the job to run on its next tick.
+// Receive is the router.Subscriber hook that ends a scheduled turn. A
+// PromptResponse marks the normal end of the turn; a ConversationClosed marks an
+// abnormal one — the agent subprocess exited before the turn completed, so no
+// PromptResponse will ever arrive. Either way the scheduler closes the
+// conversation (unless the job reuses it) and releases the job to run on its
+// next tick; without handling the closed case a wedged turn would skip every
+// later tick as "previous run still active".
 func (s *Scheduler) Receive(_ context.Context, _ *json.RawMessage, id types.ConversationMeta, msg any) {
-	if _, ok := msg.(acp.PromptResponse); !ok {
+	var reason string
+	switch msg.(type) {
+	case acp.PromptResponse:
+		reason = "turn completed"
+	case types.ConversationClosed:
+		reason = "conversation closed before turn completed"
+	default:
 		return
 	}
 	s.mu.Lock()
@@ -82,7 +92,7 @@ func (s *Scheduler) Receive(_ context.Context, _ *json.RawMessage, id types.Conv
 	if !ok {
 		return
 	}
-	slog.Info("scheduled job turn completed", "job", job.Name, "conversation", id.ConversationID)
+	slog.Info("scheduled job finished", "job", job.Name, "conversation", id.ConversationID, "reason", reason)
 	s.finish(id, job)
 }
 
