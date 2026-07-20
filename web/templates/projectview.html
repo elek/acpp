@@ -170,6 +170,9 @@
       {{end}}
       <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
       {{end}}
+      {{if and .CreatorEnabled .ActiveDir}}
+      <button type="button" class="stop-btn" id="new-conversation-btn">new</button>
+      {{end}}
     </div>
     <div class="conversation-area" id="conversation">
       {{if .ActiveSession}}
@@ -824,6 +827,11 @@
     }
 
     if (newSessionBtn) newSessionBtn.addEventListener('click', startNewSession);
+
+    // The session-bar "new" button is always present (even before any session
+    // exists) and drives the same fresh-session flow as the prompt-bar button.
+    var newConvBtn = document.getElementById('new-conversation-btn');
+    if (newConvBtn) newConvBtn.addEventListener('click', startNewSession);
 
     // Stopping ends the session. Drive the prompt-bar state from the click
     // directly (rather than a full-page reload that races the server-side status
