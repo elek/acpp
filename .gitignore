@@ -6,3 +6,4 @@
 .pnpm-debug.log
 desktop/desktop
 docs/plans/
+.envrc
