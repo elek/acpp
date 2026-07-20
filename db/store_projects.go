@@ -22,7 +22,7 @@ func (s *PostgresStore) ListProjectDirs(ctx context.Context) ([]ProjectDirRow, e
 		FROM session
 		WHERE dir != ''
 		GROUP BY dir
-		ORDER BY has_running DESC, dir`)
+		ORDER BY MAX(GREATEST(created_at, finished_at)) DESC NULLS LAST, dir`)
 	if err != nil {
 		return nil, errors.Wrap(err, "querying project dirs")
 	}

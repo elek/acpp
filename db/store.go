@@ -35,6 +35,10 @@ type ProjectListRow struct {
 	Dir        string
 	Agent      string
 	HasRunning bool
+	// LastUsed is the most recent activity across the project's sessions
+	// (the latest of any session's created_at/finished_at). Zero when the
+	// project has no sessions.
+	LastUsed time.Time
 }
 
 // ProjectStore is the interface for reading and writing project data.
@@ -759,11 +763,12 @@ func (s *PostgresStore) ClearProjectEnv(ctx context.Context, name string) error 
 func (s *PostgresStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.name, p.dir, p.agent,
-		       COALESCE(bool_or(s.status IN ('running', 'pending')), false) AS has_running
+		       COALESCE(bool_or(s.status IN ('running', 'pending')), false) AS has_running,
+		       MAX(GREATEST(s.created_at, s.finished_at)) AS last_used
 		FROM project p
 		LEFT JOIN session s ON s.project_name = p.name
 		GROUP BY p.name, p.dir, p.agent
-		ORDER BY has_running DESC, p.name`)
+		ORDER BY last_used DESC NULLS LAST, p.name`)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing projects")
 	}
@@ -771,8 +776,12 @@ func (s *PostgresStore) ListProjects(ctx context.Context) ([]ProjectListRow, err
 	var result []ProjectListRow
 	for rows.Next() {
 		var r ProjectListRow
-		if err := rows.Scan(&r.Name, &r.Dir, &r.Agent, &r.HasRunning); err != nil {
+		var lastUsed *time.Time
+		if err := rows.Scan(&r.Name, &r.Dir, &r.Agent, &r.HasRunning, &lastUsed); err != nil {
 			return nil, errors.Wrap(err, "scanning project row")
+		}
+		if lastUsed != nil {
+			r.LastUsed = *lastUsed
 		}
 		result = append(result, r)
 	}

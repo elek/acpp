@@ -439,6 +439,7 @@ func (m *MemStore) ListProjectDirs(ctx context.Context) ([]ProjectDirRow, error)
 	defer m.mu.RUnlock()
 	dirs := map[string]bool{}
 	running := map[string]bool{}
+	lastUsed := map[string]time.Time{}
 	for _, s := range m.sessions {
 		if s.Dir == "" {
 			continue
@@ -447,14 +448,21 @@ func (m *MemStore) ListProjectDirs(ctx context.Context) ([]ProjectDirRow, error)
 		if s.Status == "running" || s.Status == "pending" {
 			running[s.Dir] = true
 		}
+		used := s.CreatedAt
+		if s.FinishedAt != nil && s.FinishedAt.After(used) {
+			used = *s.FinishedAt
+		}
+		if used.After(lastUsed[s.Dir]) {
+			lastUsed[s.Dir] = used
+		}
 	}
 	result := make([]ProjectDirRow, 0, len(dirs))
 	for d := range dirs {
 		result = append(result, ProjectDirRow{Dir: d, HasRunning: running[d]})
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].HasRunning != result[j].HasRunning {
-			return result[i].HasRunning
+		if !lastUsed[result[i].Dir].Equal(lastUsed[result[j].Dir]) {
+			return lastUsed[result[i].Dir].After(lastUsed[result[j].Dir])
 		}
 		return result[i].Dir < result[j].Dir
 	})
@@ -569,9 +577,17 @@ func (m *MemStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 	defer m.mu.RUnlock()
 
 	running := map[string]bool{}
+	lastUsed := map[string]time.Time{}
 	for _, s := range m.sessions {
 		if s.Status == "running" || s.Status == "pending" {
 			running[s.ProjectName] = true
+		}
+		used := s.CreatedAt
+		if s.FinishedAt != nil && s.FinishedAt.After(used) {
+			used = *s.FinishedAt
+		}
+		if used.After(lastUsed[s.ProjectName]) {
+			lastUsed[s.ProjectName] = used
 		}
 	}
 
@@ -582,11 +598,12 @@ func (m *MemStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 			Dir:        p.Dir,
 			Agent:      p.Agent,
 			HasRunning: running[p.Name],
+			LastUsed:   lastUsed[p.Name],
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].HasRunning != result[j].HasRunning {
-			return result[i].HasRunning
+		if !result[i].LastUsed.Equal(result[j].LastUsed) {
+			return result[i].LastUsed.After(result[j].LastUsed)
 		}
 		return result[i].Name < result[j].Name
 	})
