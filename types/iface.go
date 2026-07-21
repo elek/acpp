@@ -24,6 +24,12 @@ type SessionOpts struct {
 	// SandboxType is the sandbox type string ("bbwrap", "none", …) used to create
 	// Sandbox, retained for persistence since sandbox.Sandbox exposes no name.
 	SandboxType string
+	// SandboxProfiles is the comma-separated profile list requested by the caller
+	// (e.g. "android,docker"). It is only a request: Router.Create builds the
+	// actual Sandbox, folding the project's .acpp.yaml over these. Callers should
+	// leave Sandbox nil and set SandboxType/SandboxProfiles so the project file is
+	// honored; a pre-built Sandbox bypasses that resolution.
+	SandboxProfiles string
 }
 
 // SessionEvent pairs a session update with the session ID that produced it.

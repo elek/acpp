@@ -226,9 +226,12 @@ func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
 	opts.Agent = r.cfg.ResolveAgent(agent)
 
 	// Sandbox: only resolve when the caller has not already built one. Project
-	// file > caller's type > config default.
+	// file > caller's type/profiles > config default. Channels pass the sandbox
+	// as strings (SandboxType/SandboxProfiles) and leave Sandbox nil so this is
+	// the single place .acpp.yaml is folded in — a caller that pre-builds Sandbox
+	// opts out and the project's profiles are silently dropped.
 	if opts.Sandbox == nil {
-		sbType, profiles := opts.SandboxType, ""
+		sbType, profiles := opts.SandboxType, opts.SandboxProfiles
 		if pc.Sandbox.Name != "" {
 			sbType, profiles = pc.Sandbox.Name, pc.Sandbox.Profiles
 		} else if sbType == "" {
@@ -241,6 +244,7 @@ func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
 			}
 			opts.Sandbox = sb
 			opts.SandboxType = sbType
+			opts.SandboxProfiles = profiles
 		}
 	}
 

@@ -10,7 +10,6 @@ import (
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/router"
-	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 )
 
@@ -106,19 +105,16 @@ func (c *WebChannel) publish(sessionID, eventType string, raw json.RawMessage) {
 // ACP session id, which the frontend uses as the session URL key. Implements
 // SessionCreator.
 func (c *WebChannel) StartSessionWeb(dir, agent, sandboxType, sandboxProfiles, projectName string) (string, error) {
+	// Leave Sandbox nil: Router.Create resolves it, folding the project's
+	// .acpp.yaml (which is where profiles like "docker" live) over these
+	// caller-supplied defaults. Pre-building it here would bypass that.
 	opts := types.SessionOpts{
-		ProjectID:   projectName,
-		Agent:       agent,
-		CWD:         dir,
-		Source:      "web",
-		SandboxType: sandboxType,
-	}
-	if sandboxType != "" {
-		sb, err := sandbox.ResolveSandbox(sandboxType, sandboxProfiles, dir)
-		if err != nil {
-			return "", err
-		}
-		opts.Sandbox = sb
+		ProjectID:       projectName,
+		Agent:           agent,
+		CWD:             dir,
+		Source:          "web",
+		SandboxType:     sandboxType,
+		SandboxProfiles: sandboxProfiles,
 	}
 
 	id, err := c.router.Create(context.Background(), opts)

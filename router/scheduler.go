@@ -10,7 +10,6 @@ import (
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/db"
-	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 	"github.com/robfig/cron/v3"
 )
@@ -262,11 +261,7 @@ func (s *Scheduler) acquireConversation(job config.ScheduledJob, agent, sandboxT
 		}
 	}
 
-	opts, err := s.opts(job, agent, sandboxType)
-	if err != nil {
-		slog.Error("failed to resolve sandbox for scheduled job", "job", job.Name, "err", err)
-		return types.ConversationMeta{}, false
-	}
+	opts := s.opts(job, agent, sandboxType)
 	meta, err := s.conv.Create(s.context(), opts)
 	if err != nil {
 		slog.Error("failed to create scheduled conversation", "job", job.Name, "err", err)
@@ -296,23 +291,19 @@ func (s *Scheduler) finish(meta types.ConversationMeta, job config.ScheduledJob)
 }
 
 // opts builds the session options for a job from its resolved agent and sandbox.
-func (s *Scheduler) opts(job config.ScheduledJob, agent, sandboxType string) (types.SessionOpts, error) {
-	opts := types.SessionOpts{
-		ProjectID:   job.Name,
-		Agent:       agent,
-		CWD:         job.Dir,
-		Env:         job.Env,
-		Source:      "schedule",
-		SandboxType: sandboxType,
+// It leaves Sandbox nil and hands the sandbox type/profiles to Router.Create as
+// strings, so the job's .acpp.yaml is folded in alongside the job's own settings
+// rather than bypassed by a pre-built sandbox.
+func (s *Scheduler) opts(job config.ScheduledJob, agent, sandboxType string) types.SessionOpts {
+	return types.SessionOpts{
+		ProjectID:       job.Name,
+		Agent:           agent,
+		CWD:             job.Dir,
+		Env:             job.Env,
+		Source:          "schedule",
+		SandboxType:     sandboxType,
+		SandboxProfiles: job.SandboxProfiles,
 	}
-	if sandboxType != "" {
-		sb, err := sandbox.ResolveSandbox(sandboxType, job.SandboxProfiles, job.Dir)
-		if err != nil {
-			return opts, err
-		}
-		opts.Sandbox = sb
-	}
-	return opts, nil
 }
 
 // context returns the scheduler's lifetime context, or a background context when
