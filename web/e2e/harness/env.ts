@@ -65,4 +65,7 @@ export interface HarnessState {
   servers: Record<string, string>;
   // child process ids to kill on teardown.
   pids: number[];
+  // agent name -> its server's process id, so a test can restart a specific
+  // server (see harness/restart.ts) and teardown can target the current one.
+  serverPids: Record<string, number>;
 }

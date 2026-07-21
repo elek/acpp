@@ -10,11 +10,17 @@ const COMPOSE = ['compose', '-f', path.join(E2E_DIR, 'docker-compose.yml')];
 async function globalTeardown(): Promise<void> {
   if (fs.existsSync(STATE_FILE)) {
     const state: HarnessState = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    // Servers run as process-group leaders (see global-setup); kill the whole
+    // group so no agent subprocess is orphaned, falling back to the leader alone.
     for (const pid of state.pids) {
       try {
-        process.kill(pid, 'SIGTERM');
+        process.kill(-pid, 'SIGTERM');
       } catch {
-        /* already gone */
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          /* already gone */
+        }
       }
     }
   }

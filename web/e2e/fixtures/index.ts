@@ -21,7 +21,7 @@ export interface ServerInfo {
 }
 
 function readState(): HarnessState {
-  if (!fs.existsSync(STATE_FILE)) return { servers: {}, pids: [] };
+  if (!fs.existsSync(STATE_FILE)) return { servers: {}, pids: [], serverPids: {} };
   return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
 }
 

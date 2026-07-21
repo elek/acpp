@@ -65,7 +65,7 @@ async function globalSetup(): Promise<void> {
   sh('go', ['build', '-o', ACPP_BIN, '.'], REPO_ROOT);
 
   const searchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acpp-e2e-projects-'));
-  const state: HarnessState = { servers: {}, pids: [] };
+  const state: HarnessState = { servers: {}, pids: [], serverPids: {} };
 
   for (const agent of AGENTS) {
     if (!onPath(agent.bin)) {
@@ -84,12 +84,18 @@ async function globalSetup(): Promise<void> {
     const logPath = path.join(configHome, 'server.log');
     const logFd = fs.openSync(logPath, 'w');
     console.log(`>> starting acpp web for '${agent.name}' on ${url} (${agent.command})`);
+    // detached makes the child a process-group leader so a restart test can kill
+    // the whole tree (server + agent) with process.kill(-pid, …).
     const child = spawn(ACPP_BIN, ['web', '--addr', `:${agent.port}`], {
       env: { ...process.env, XDG_CONFIG_HOME: configHome },
       stdio: ['ignore', logFd, logFd],
+      detached: true,
     });
     child.unref();
-    if (child.pid) state.pids.push(child.pid);
+    if (child.pid) {
+      state.pids.push(child.pid);
+      state.serverPids[agent.name] = child.pid;
+    }
 
     try {
       await waitHealthy(url);
