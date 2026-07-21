@@ -6,12 +6,13 @@ import (
 )
 
 type CLI struct {
-	Replay cli2.Replay `cmd:"" help:"Replay ACP messages from stdin (JSONL) to test channels"`
-	Cat    cli2.Cat    `cmd:"" help:"Send prompts from stdin to ACP agent, output JSONL"`
-	Run    cli2.Run    `cmd:"" help:"Send prompt to ACP agent and display formatted response"`
-	Serve  cli2.Serve  `cmd:"" help:"Start the web UI, scheduler, and (with a token) the Discord bot on a shared router"`
-	Read   cli2.Read   `cmd:"" help:"Read a text file (used by sandbox delegation)"`
-	Tck    cli2.Tck    `cmd:"" help:"Test ACP agent binaries and report a compatibility matrix"`
+	Replay  cli2.Replay  `cmd:"" help:"Replay ACP messages from stdin (JSONL) to test channels"`
+	Cat     cli2.Cat     `cmd:"" help:"Send prompts from stdin to ACP agent, output JSONL"`
+	Run     cli2.Run     `cmd:"" help:"Send prompt to ACP agent and display formatted response"`
+	Serve   cli2.Serve   `cmd:"" help:"Start the web UI, scheduler, and (with a token) the Discord bot on a shared router"`
+	Sandbox cli2.Sandbox `cmd:"" help:"Start an interactive command (bash by default) inside a sandbox"`
+	Read    cli2.Read    `cmd:"" help:"Read a text file (used by sandbox delegation)"`
+	Tck     cli2.Tck     `cmd:"" help:"Test ACP agent binaries and report a compatibility matrix"`
 }
 
 func main() {
