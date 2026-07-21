@@ -1,4 +1,4 @@
-// restartServer stops and restarts a single agent's acpp web server, the way a
+// restartServer stops and restarts a single agent's acpp serve server, the way a
 // real deploy/crash-recovery would. Tests use it to prove that sessions left
 // active by the previous process are completed once a new process comes up.
 //
@@ -68,7 +68,7 @@ export async function restartServer(
   await waitFor(async () => !(await isHealthy(url)), `${name} server to stop`, 30_000);
 
   const logFd = fs.openSync(path.join(configHome, 'server.log'), 'a');
-  const child = spawn(ACPP_BIN, ['web', '--addr', `:${spec.port}`], {
+  const child = spawn(ACPP_BIN, ['serve', '--addr', `:${spec.port}`], {
     env: { ...process.env, XDG_CONFIG_HOME: configHome },
     stdio: ['ignore', logFd, logFd],
     detached: true,

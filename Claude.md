@@ -44,8 +44,7 @@ CLI (kong) → Commands → Session Management → ACP Client → Agent Subproce
 ```bash
 go build -o acpp .
 ./acpp run "prompt"           # One-shot execution
-./acpp serve                  # HTTP server (localhost:8080)
-./acpp serve --discord        # With Discord bot (needs DISCORD_TOKEN)
+./acpp serve                  # Web UI + scheduler (localhost:8080); Discord bot too if a token is configured
 ```
 
 ### Testing

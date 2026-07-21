@@ -36,7 +36,7 @@ The harness (`harness/global-setup.ts`) automatically:
 
 1. brings up an **empty** postgres via `docker-compose.yml` (host port 5434),
 2. builds `acpp` into `.run/bin/acpp`,
-3. starts one `acpp web` server per available agent (rai → :6071,
+3. starts one `acpp serve` server per available agent (rai → :6071,
    claude-code-acp → :6072) with a private `XDG_CONFIG_HOME`,
 4. health-gates each on `/api/health`.
 

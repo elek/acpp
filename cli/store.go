@@ -14,8 +14,8 @@ import (
 // store so the web UI works out of the box (live sessions and their history are
 // kept only for the lifetime of the process).
 //
-// Every daemon that owns sessions (`acpp web`, `acpp serve`) opens the store
-// here, so this is where stale sessions from a previous run are finalized: any
+// The daemon that owns sessions (`acpp serve`) opens the store here, so this is
+// where stale sessions from a previous run are finalized: any
 // conversation still marked running/pending belongs to a process that exited
 // without finalizing it (a crash or kill -9). Completing them on startup keeps
 // stale sessions from lingering as active — for example lighting up every

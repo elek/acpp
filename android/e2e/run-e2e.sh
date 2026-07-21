@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full automated Android end-to-end run:
-#   1. bring up postgres + acpp web (running `rai acp fake`)
+#   1. bring up postgres + acpp serve (running `rai acp fake`)
 #   2. install + run the instrumented test on the connected adb device
 #      (emulator or real phone)
 #   3. tear everything down
@@ -17,7 +17,7 @@
 #
 # Optional knobs:
 #   STEP_DELAY_MS=1000   pause ~1s after each UI step so a human can follow along
-#   KEEP_RUNNING=1       leave postgres + acpp web (+ the adb reverse tunnel) up
+#   KEEP_RUNNING=1       leave postgres + acpp serve (+ the adb reverse tunnel) up
 #                        after the test for further manual testing; tear it down
 #                        afterwards with ./stop-backend.sh
 #
@@ -60,8 +60,8 @@ db_up
 build_acpp
 render_config
 export XDG_CONFIG_HOME="$RUN_DIR"
-echo ">> starting acpp web (background) -> $RUN_DIR/server.log"
-"$ACPP_BIN" web --addr "$SERVER_ADDR" >"$RUN_DIR/server.log" 2>&1 &
+echo ">> starting acpp serve (background) -> $RUN_DIR/server.log"
+"$ACPP_BIN" serve --addr "$SERVER_ADDR" >"$RUN_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 wait_health
 

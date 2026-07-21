@@ -1,4 +1,4 @@
-// Global setup: bring up an empty postgres, build acpp, and start one acpp web
+// Global setup: bring up an empty postgres, build acpp, and start one acpp serve
 // server per available agent (each on its own port with a private config). The
 // resulting server URLs and child pids are written to state.json for the
 // fixtures and for global-teardown. Runs once before the whole suite.
@@ -83,10 +83,10 @@ async function globalSetup(): Promise<void> {
     const url = baseURLForAgent(agent.name);
     const logPath = path.join(configHome, 'server.log');
     const logFd = fs.openSync(logPath, 'w');
-    console.log(`>> starting acpp web for '${agent.name}' on ${url} (${agent.command})`);
+    console.log(`>> starting acpp serve for '${agent.name}' on ${url} (${agent.command})`);
     // detached makes the child a process-group leader so a restart test can kill
     // the whole tree (server + agent) with process.kill(-pid, …).
-    const child = spawn(ACPP_BIN, ['web', '--addr', `:${agent.port}`], {
+    const child = spawn(ACPP_BIN, ['serve', '--addr', `:${agent.port}`], {
       env: { ...process.env, XDG_CONFIG_HOME: configHome },
       stdio: ['ignore', logFd, logFd],
       detached: true,

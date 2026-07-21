@@ -13,8 +13,8 @@ import (
 
 // TestRestartCompletesStaleSessions exercises, at the store level and against a
 // real PostgreSQL database, the stale-session cleanup every daemon runs on
-// startup (cli/store.go: openStore calls store.CompleteRunningSessions, so both
-// `acpp web` and `acpp serve` finalize stale sessions on boot).
+// startup (cli/store.go: openStore calls store.CompleteRunningSessions, so
+// `acpp serve` finalizes stale sessions on boot).
 //
 // When the process restarts, any session left 'running' or 'pending' by the
 // previous process must be marked 'complete' so stale sessions don't linger as

@@ -16,13 +16,14 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Serve starts the web UI and the Discord bot together on a single shared
-// router, so conversations created from either surface stream through the same
-// event hub and persist to the same store. Runs until interrupted (SIGINT/
-// SIGTERM) or the /exit command.
+// Serve runs the app: the web UI, the scheduler, and — when a Discord token is
+// configured — the Discord bot, all on a single shared router so conversations
+// created from any surface stream through the same event hub and persist to the
+// same store. Discord is optional: without a token, serve runs the web UI and
+// scheduler alone. Runs until interrupted (SIGINT/SIGTERM) or the /exit command.
 type Serve struct {
 	Addr       string   `help:"Web server listen address" default:":8080"`
-	Token      string   `help:"Discord bot token (defaults to discord_token in config)"`
+	Token      string   `help:"Discord bot token (defaults to discord_token in config; Discord is disabled when empty)"`
 	Agent      string   `help:"Agent command to run for conversations (defaults to config)"`
 	SearchPath []string `help:"Directories searched for a project matching the channel name (defaults to search_path in config)"`
 }
@@ -45,9 +46,6 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	if token == "" {
 		token = cfg.DiscordToken
 	}
-	if token == "" {
-		return errors.New("no Discord token provided (pass --token or set discord_token in config)")
-	}
 
 	agent := s.Agent
 	if agent == "" {
@@ -66,26 +64,32 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	}
 	defer store.Close()
 
-	// One router, shared by both surfaces.
+	// One router, shared by every surface.
 	rt := router.New(router.WithConfig(cfg))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
 
-	// Auto-approve permission requests (neither surface prompts for them). Must be
+	// Auto-approve permission requests (no surface prompts for them). Must be
 	// registered exactly once on the shared router.
 	permission.NewAllowAll(rt)
 	rt.Subscribe(router.Debug)
 
-	// Record every conversation's sessions and logs to the store (shared by both
+	// Record every conversation's sessions and logs to the store (shared by all
 	// surfaces).
 	persistence.New(rt, store)
 
-	// Discord: each channel maps to a conversation on the shared router.
-	dc, err := discord.NewDiscordChannel(token, agent, searchPaths, rt)
-	if err != nil {
-		return errors.Wrap(err, "starting Discord integration")
+	// Discord is optional: wire the bot only when a token is available, so serve
+	// can run the web UI (and scheduler) alone — e.g. in tests. Each Discord
+	// channel maps to a conversation on the shared router.
+	if token != "" {
+		dc, err := discord.NewDiscordChannel(token, agent, searchPaths, rt)
+		if err != nil {
+			return errors.Wrap(err, "starting Discord integration")
+		}
+		defer dc.Close()
+	} else {
+		slog.Info("no Discord token configured; starting web UI only")
 	}
-	defer dc.Close()
 
 	// Web: streams every conversation (including Discord's) and can start its own.
 	addr := resolveWebAddr(s.Addr, cfg)
@@ -115,4 +119,16 @@ func (s *Serve) Run(kctx *kong.Context) error {
 
 	<-ctx.Done()
 	return nil
+}
+
+// resolveWebAddr prefers the explicit --addr flag, falling back to web_addr in
+// config when the flag is left at its default.
+func resolveWebAddr(flagAddr string, cfg *config.Config) string {
+	if flagAddr != "" && flagAddr != ":8080" {
+		return flagAddr
+	}
+	if cfg.WebAddr != "" {
+		return cfg.WebAddr
+	}
+	return ":8080"
 }

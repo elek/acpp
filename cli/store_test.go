@@ -19,11 +19,10 @@ import (
 const dsnEnv = "ACPP_TEST_POSTGRES"
 
 // TestOpenStoreCompletesStaleSessions pins the invariant that opening the store
-// on daemon startup finalizes sessions a previous process left active. Both
-// daemons that own sessions — `acpp web` and `acpp serve` — go through
-// openStore, so putting the cleanup there is what stops stale sessions from
-// lingering as "running" (green in the web UI) after a restart, regardless of
-// which command was restarted.
+// on daemon startup finalizes sessions a previous process left active. The
+// daemon that owns sessions — `acpp serve` — goes through openStore, so putting
+// the cleanup there is what stops stale sessions from lingering as "running"
+// (green in the web UI) after a restart.
 func TestOpenStoreCompletesStaleSessions(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv(dsnEnv))
 	if dsn == "" {

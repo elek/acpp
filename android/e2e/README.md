@@ -63,7 +63,7 @@ Report: `android/app/build/reports/androidTests/connected/debug/index.html`.
 # Watch it run: pause ~1s after each UI step so a human can follow on-device.
 STEP_DELAY_MS=1000 android/e2e/run-e2e.sh
 
-# Keep the backend (postgres + acpp web + the adb reverse tunnel) up after the
+# Keep the backend (postgres + acpp serve + the adb reverse tunnel) up after the
 # test so you can keep poking at it by hand. Tear it down when done:
 KEEP_RUNNING=1 android/e2e/run-e2e.sh
 android/e2e/stop-backend.sh
@@ -75,7 +75,7 @@ STEP_DELAY_MS=1000 KEEP_RUNNING=1 android/e2e/run-e2e.sh
 ## Manual testing
 
 ```bash
-android/e2e/start-backend.sh     # leaves acpp web running on :6061
+android/e2e/start-backend.sh     # leaves acpp serve running on :6061
 # ... drive the app by hand. Point it at:
 #   emulator:           http://10.0.2.2:6061
 #   real phone (LAN):   http://<host-LAN-IP>:6061

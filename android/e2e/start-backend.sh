@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bring up the e2e backend (postgres + acpp web running `rai acp fake`) and leave
+# Bring up the e2e backend (postgres + acpp serve running `rai acp fake`) and leave
 # it running in the foreground. Use this for manual testing: start it, then drive
 # the Android app by hand on an emulator or a real phone.
 #
@@ -19,10 +19,10 @@ build_acpp
 render_config
 
 echo
-echo ">> acpp web starting on ${SERVER_ADDR}"
+echo ">> acpp serve starting on ${SERVER_ADDR}"
 echo ">>   emulator   -> http://10.0.2.2:6061"
 echo ">>   real phone -> http://<this-host-LAN-IP>:6061"
 echo ">>   demo project dir (type into 'New session'): ${PROJECTS_DIR}/demo"
 echo
 export XDG_CONFIG_HOME="$RUN_DIR"
-exec "$ACPP_BIN" web --addr "$SERVER_ADDR"
+exec "$ACPP_BIN" serve --addr "$SERVER_ADDR"

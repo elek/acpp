@@ -21,10 +21,10 @@ import (
 )
 
 // TestRestartBinaryCompletesStaleSessions is the faithful, cross-process version
-// of TestRestartCompletesStaleSessions: it builds and runs the real `acpp web`
-// binary against the test database, creates a live session over the HTTP API,
-// terminates the process, then restarts it and checks the database. `acpp serve`
-// shares the same startup seam (openStore), so cleaning up there is covered too.
+// of TestRestartCompletesStaleSessions: it builds and runs the real `acpp serve`
+// binary (no Discord token, so web UI only) against the test database, creates a
+// live session over the HTTP API, terminates the process, then restarts it and
+// checks the database.
 //
 // It runs two ways, because how the process dies decides who finalizes the
 // session:
@@ -69,7 +69,7 @@ func TestRestartBinaryCompletesStaleSessions(t *testing.T) {
 			writeWebConfig(t, configHome, dsn, port)
 
 			// First boot, and a live session that never gets a deliberate close.
-			first := startWeb(t, bin, configHome, port)
+			first := startServe(t, bin, configHome, port)
 			waitHealthy(t, base)
 			sid := createWebSession(t, base, proj)
 			waitSessionActive(t, ctx, store, sid)
@@ -95,7 +95,7 @@ func TestRestartBinaryCompletesStaleSessions(t *testing.T) {
 
 			// Restart: the new process's startup cleanup must complete anything the
 			// previous run left active.
-			second := startWeb(t, bin, configHome, port)
+			second := startServe(t, bin, configHome, port)
 			t.Cleanup(func() {
 				_ = syscall.Kill(-second.Process.Pid, syscall.SIGKILL)
 				_ = second.Wait()
@@ -143,12 +143,12 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// serverLogPath is where startWeb sends a server instance's stdout/stderr.
+// serverLogPath is where startServe sends a server instance's stdout/stderr.
 func serverLogPath(configHome string, port int) string {
 	return filepath.Join(configHome, fmt.Sprintf("server-%d.log", port))
 }
 
-// writeWebConfig writes the config.yaml an `acpp web` instance reads from its
+// writeWebConfig writes the config.yaml an `acpp serve` instance reads from its
 // private XDG_CONFIG_HOME: the test database, the listen port, and the offline
 // fake agent with no sandbox.
 func writeWebConfig(t *testing.T, configHome, dsn string, port int) {
@@ -160,16 +160,16 @@ func writeWebConfig(t *testing.T, configHome, dsn string, port int) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644))
 }
 
-// startWeb launches `acpp web` with the given private config home in its own
+// startServe launches `acpp serve` with the given private config home in its own
 // process group (so the whole tree can be killed) and returns the running
 // command. Output is captured to serverLogPath for later inspection.
-func startWeb(t *testing.T, bin, configHome string, port int) *exec.Cmd {
+func startServe(t *testing.T, bin, configHome string, port int) *exec.Cmd {
 	t.Helper()
 	logFile, err := os.Create(serverLogPath(configHome, port))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = logFile.Close() })
 
-	cmd := exec.Command(bin, "web", "--addr", fmt.Sprintf(":%d", port))
+	cmd := exec.Command(bin, "serve", "--addr", fmt.Sprintf(":%d", port))
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+configHome)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

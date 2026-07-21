@@ -26,13 +26,17 @@ go build -o acpp .
 
 ## Quick Start
 
-### Discord Bot with Web server
+### Web server (and optional Discord bot)
 
-Run as a Discord bot (requires token):
+Start the web UI, scheduler, and — when a Discord token is configured — the
+Discord bot, all on a shared router:
 
 ```bash
 acpp serve
 ```
+
+Discord is enabled automatically when a token is available (`--token` flag or
+`discord_token` in config); without one, `serve` runs the web UI alone.
 ## Session Commands
 
 These commands work across all channels (Discord, Console, Web):
