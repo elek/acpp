@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/elek/acpp/acp"
@@ -141,9 +142,11 @@ func (c *WebChannel) StartSessionWeb(dir, agent, sandboxType, sandboxProfiles, p
 }
 
 // SubmitPrompt routes a user prompt to the conversation backing sessionID. A
-// leading-slash message (e.g. /clear) is handled by the router as a command. The
-// prompt is echoed to the browser as a "prompt" event (via the router fanning the
-// raw PromptRequest out to subscribers) so it renders immediately.
+// harness command (e.g. /clear, /help, !ls) is echoed to the browser as a
+// transient "command" event, executed by the router, and its feedback published
+// as a "command_response" event — both browser-only, never persisted. A normal
+// prompt is echoed as a "prompt" event (via the router fanning the raw
+// PromptRequest out to subscribers) so it renders immediately.
 func (c *WebChannel) SubmitPrompt(sessionID, prompt string) error {
 	c.mu.Lock()
 	conv, ok := c.byID[sessionID]
@@ -152,13 +155,24 @@ func (c *WebChannel) SubmitPrompt(sessionID, prompt string) error {
 		return errUnknownSession
 	}
 
+	// Echo a recognised command before running it: /clear navigates away and
+	// /exit shuts the app down, so the echo has to be published first to be seen.
+	if router.IsCommand(prompt) {
+		payload, _ := json.Marshal(map[string]string{"text": strings.TrimSpace(prompt)})
+		c.publish(sessionID, "command", payload)
+	}
+
 	go func() {
 		ctx := context.Background()
-		// A leading-slash message (e.g. /clear) is a command, not a prompt.
-		if handled, err := c.router.HandleCommands(ctx, conv, prompt); err != nil {
-			c.reportSubmitErr(sessionID, err)
+		// A harness command (e.g. /clear) is not a prompt. Its feedback is surfaced
+		// transiently to the browser rather than persisted like agent output.
+		if handled, feedback, err := c.router.HandleCommands(ctx, conv, prompt); err != nil {
+			c.publishCommandResponse(sessionID, "⚠️ "+err.Error())
 			return
 		} else if handled {
+			if feedback != "" {
+				c.publishCommandResponse(sessionID, feedback)
+			}
 			return
 		}
 		meta, err := c.router.WaitReady(ctx, conv)
@@ -174,6 +188,14 @@ func (c *WebChannel) SubmitPrompt(sessionID, prompt string) error {
 		}
 	}()
 	return nil
+}
+
+// publishCommandResponse surfaces a command's textual feedback to the browser as
+// a transient "command_response" event. It is published directly to the Hub —
+// never through the router — so command output is not persisted or replayed.
+func (c *WebChannel) publishCommandResponse(sessionID, text string) {
+	payload, _ := json.Marshal(map[string]string{"text": text})
+	c.publish(sessionID, "command_response", payload)
 }
 
 // reportSubmitErr logs a failed prompt submission and surfaces it to the browser

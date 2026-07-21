@@ -243,7 +243,7 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 	// so stop it explicitly.
 	go func() {
 		c.typing.Start(channelID)
-		if err := c.submitPrompt(id, prompt); err != nil {
+		if err := c.submitPrompt(channelID, id, prompt); err != nil {
 			log.Printf("discord: submit to conversation %v: %v", id, err)
 			c.sendSystem(channelID, "⚠️ "+err.Error())
 			c.typing.Stop(channelID)
@@ -255,14 +255,19 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 // is interpreted as a command, otherwise the prompt is fired (after the session
 // finishes initializing) via the router's generic Send, which fans the raw
 // PromptRequest out to subscribers for persistence/echo. It does not block for
-// the turn; completion arrives later as a PromptResponse in Receive.
-func (c *DiscordChannel) submitPrompt(id types.ConversationMeta, prompt []acp.ContentBlock) error {
+// the turn; completion arrives later as a PromptResponse in Receive. Command
+// feedback (shell output, the /help listing, a confirmation) is sent back to
+// channelID as a system message.
+func (c *DiscordChannel) submitPrompt(channelID string, id types.ConversationMeta, prompt []acp.ContentBlock) error {
 	// A leading-slash message is a command, not a prompt. Only the text block
 	// matters for that check; any image blocks ride along untouched in the
 	// PromptRequest sent below.
 	if len(prompt) > 0 && prompt[0].Text != nil {
-		handled, err := c.router.HandleCommands(c.ctx, id, prompt[0].Text.Text)
+		handled, feedback, err := c.router.HandleCommands(c.ctx, id, prompt[0].Text.Text)
 		if err != nil || handled {
+			if feedback != "" {
+				c.sendSystem(channelID, feedback)
+			}
 			return err
 		}
 	}

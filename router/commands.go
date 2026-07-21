@@ -12,13 +12,39 @@ import (
 	"github.com/elek/acpp/types"
 )
 
+// harnessSlashCommands is the set of leading-slash commands the harness itself
+// consumes. Anything else starting with "/" (e.g. an agent-advertised command
+// like /review) falls through to be sent to the agent as a prompt.
+var harnessSlashCommands = map[string]bool{
+	"/cancel": true,
+	"/clear":  true,
+	"/exit":   true,
+	"/help":   true,
+}
+
+// IsCommand reports whether text (after trimming) is a harness command the
+// caller should surface specially rather than send to the agent: a recognised
+// leading-slash command or a single-line "!" shell escape. Callers use this to
+// decide whether to echo the input as a control action before dispatching it via
+// HandleCommands.
+func IsCommand(text string) bool {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "!") && !strings.ContainsRune(text, '\n') {
+		return true
+	}
+	fields := strings.Fields(text)
+	return len(fields) > 0 && harnessSlashCommands[fields[0]]
+}
+
 // HandleCommands interprets a control input issued in the conversation
-// identified by id: a leading-slash command (/cancel, /clear, /exit) or a
+// identified by id: a leading-slash command (/cancel, /clear, /exit, /help) or a
 // single-line "!" shell escape that runs the rest of the line inside the
 // conversation's sandbox. It returns handled=false when text is neither, leaving
-// the caller to treat it as a normal prompt. Any feedback (e.g. shell output) is
-// fanned to subscribers through the router rather than returned here.
-func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, text string) (handled bool, err error) {
+// the caller to treat it as a normal prompt. When handled, any textual feedback
+// (shell output, the /help listing, a confirmation) is returned for the caller
+// to surface however it renders control output — it is deliberately not fanned
+// through the router, so command output stays transient and is never persisted.
+func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, text string) (handled bool, feedback string, err error) {
 	text = strings.TrimSpace(text)
 
 	// A single line prefixed with "!" is a shell escape: run the rest of the line
@@ -29,7 +55,7 @@ func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, 
 	}
 
 	if !strings.HasPrefix(text, "/") {
-		return false, nil
+		return false, "", nil
 	}
 
 	switch strings.Fields(text)[0] {
@@ -44,20 +70,21 @@ func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, 
 		}
 		r.mu.RUnlock()
 		if !ok {
-			return true, fmt.Errorf("router: unknown conversation %v", id)
+			return true, "", fmt.Errorf("router: unknown conversation %v", id)
 		}
 		if err := r.Send(ctx, id, acp.CancelNotification{SessionId: sessionID}); err != nil {
-			return true, err
+			return true, "", err
 		}
-		return true, nil
+		return true, "Cancelled the in-flight turn.", nil
 	case "/clear":
 		// Restart the conversation's session, discarding prior context. The
 		// resulting ConversationReplaced event lets channels re-point their
-		// mapping and surface feedback to the user.
+		// mapping (the web UI navigates to the fresh session), so no textual
+		// feedback is needed here.
 		if _, err := r.Restart(ctx, id); err != nil {
-			return true, err
+			return true, "", err
 		}
-		return true, nil
+		return true, "", nil
 	case "/exit":
 		// Bring the whole application down via the registered shutdown hook
 		// (typically the main context's cancel func).
@@ -67,12 +94,12 @@ func (r *Router) HandleCommands(ctx context.Context, id types.ConversationMeta, 
 		if shutdown != nil {
 			shutdown()
 		}
-		return true, nil
+		return true, "Shutting down…", nil
 	case "/help":
 		return r.handleHelp(ctx, id)
 	}
 
-	return false, nil
+	return false, "", nil
 }
 
 // harnessCommands is the static list of commands the harness itself handles,
@@ -85,22 +112,20 @@ var harnessCommands = []struct{ Name, Desc string }{
 	{"!<command>", "Run a shell command in the conversation's sandbox"},
 }
 
-// handleHelp fans back a listing of the commands available in this conversation:
+// handleHelp returns a listing of the commands available in this conversation:
 // first the commands the agent advertised (if any), then the built-in harness
-// commands. The listing is surfaced as an agent message so every channel renders
-// it the same way it renders the agent's own output.
-func (r *Router) handleHelp(ctx context.Context, id types.ConversationMeta) (handled bool, err error) {
+// commands. The listing is returned as feedback for the caller to render however
+// it surfaces control output.
+func (r *Router) handleHelp(ctx context.Context, id types.ConversationMeta) (handled bool, feedback string, err error) {
 	r.mu.RLock()
 	state, ok := r.sessions[id.ConversationID]
 	var agentCmds []acp.AvailableCommand
-	var meta types.ConversationMeta
 	if ok {
 		agentCmds = state.availableCommands
-		meta = state.meta
 	}
 	r.mu.RUnlock()
 	if !ok {
-		return true, fmt.Errorf("router: unknown conversation %v", id)
+		return true, "", fmt.Errorf("router: unknown conversation %v", id)
 	}
 
 	var b strings.Builder
@@ -116,39 +141,28 @@ func (r *Router) handleHelp(ctx context.Context, id types.ConversationMeta) (han
 		fmt.Fprintf(&b, "  %-15s %s\n", c.Name, c.Desc)
 	}
 
-	r.Receive(ctx, nil, meta, acp.SessionNotification{
-		SessionId: meta.SessionID,
-		Update: acp.SessionUpdate{
-			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-				Content:       acp.TextBlock(b.String()),
-				SessionUpdate: "agent_message_chunk",
-			},
-		},
-	})
-	return true, nil
+	return true, b.String(), nil
 }
 
-// handleShell runs command inside the conversation's sandbox and fans the
-// command line together with its combined output back through the router as an
-// agent message, so every subscribed channel renders it the same way it renders
-// the agent's own messages. An empty command is consumed but runs nothing.
-func (r *Router) handleShell(ctx context.Context, id types.ConversationMeta, command string) (handled bool, err error) {
+// handleShell runs command inside the conversation's sandbox and returns the
+// command line together with its combined output as feedback for the caller to
+// render however it surfaces control output. An empty command is consumed but
+// runs nothing.
+func (r *Router) handleShell(ctx context.Context, id types.ConversationMeta, command string) (handled bool, feedback string, err error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return true, nil
+		return true, "", nil
 	}
 
 	r.mu.RLock()
 	state, ok := r.sessions[id.ConversationID]
 	var opts types.SessionOpts
-	var meta types.ConversationMeta
 	if ok {
 		opts = state.opts
-		meta = state.meta
 	}
 	r.mu.RUnlock()
 	if !ok {
-		return true, fmt.Errorf("router: unknown conversation %v", id)
+		return true, "", fmt.Errorf("router: unknown conversation %v", id)
 	}
 
 	output, runErr := runInSandbox(ctx, opts.Sandbox, opts.CWD, opts.Env, command)
@@ -163,16 +177,7 @@ func (r *Router) handleShell(ctx context.Context, id types.ConversationMeta, com
 		fmt.Fprintf(&b, "[exit: %v]\n", runErr)
 	}
 
-	r.Receive(ctx, nil, meta, acp.SessionNotification{
-		SessionId: meta.SessionID,
-		Update: acp.SessionUpdate{
-			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-				Content:       acp.TextBlock(b.String()),
-				SessionUpdate: "agent_message_chunk",
-			},
-		},
-	})
-	return true, nil
+	return true, b.String(), nil
 }
 
 // runInSandbox executes a single shell command line via "sh -c", wrapped in sb

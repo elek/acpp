@@ -15,6 +15,8 @@ export class ProjectPage {
   readonly conversation: Locator;
   readonly assistantMessages: Locator;
   readonly separators: Locator;
+  readonly commandEchoes: Locator;
+  readonly commandResponses: Locator;
 
   constructor(private readonly page: Page) {
     this.promptInput = page.locator('#prompt-input');
@@ -31,6 +33,8 @@ export class ProjectPage {
     this.conversation = page.locator('#conversation');
     this.assistantMessages = page.locator('#conversation .msg-assistant .msg-content');
     this.separators = page.locator('#conversation .prompt-separator');
+    this.commandEchoes = page.locator('#conversation .msg-command .msg-content');
+    this.commandResponses = page.locator('#conversation .msg-command-response .msg-content');
   }
 
   async goto(project: string): Promise<void> {

@@ -23,7 +23,8 @@ func seedShellSession(t *testing.T, rt *Router, opts types.SessionOpts) types.Co
 }
 
 // TestHandleShellRunsCommand verifies that a single-line input prefixed with "!"
-// is executed and its stdout is fanned back to subscribers as an agent message.
+// is executed and its stdout is returned as feedback — not fanned to subscribers
+// (command output is transient, never persisted).
 func TestHandleShellRunsCommand(t *testing.T) {
 	rt := New()
 	cwd, err := os.Getwd()
@@ -33,10 +34,11 @@ func TestHandleShellRunsCommand(t *testing.T) {
 	col := &collector{t: t, done: make(chan struct{})}
 	rt.Subscribe(col.Receive)
 
-	handled, err := rt.HandleCommands(context.Background(), meta, "!echo hello-from-sandbox")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "!echo hello-from-sandbox")
 	require.NoError(t, err)
 	require.True(t, handled)
-	require.Contains(t, col.text(), "hello-from-sandbox")
+	require.Contains(t, feedback, "hello-from-sandbox")
+	require.Empty(t, col.text(), "shell output must not be fanned to subscribers")
 }
 
 // TestHandleShellRunsInCwd verifies the command runs in the conversation's
@@ -46,14 +48,11 @@ func TestHandleShellRunsInCwd(t *testing.T) {
 	dir := t.TempDir()
 	meta := seedShellSession(t, rt, types.SessionOpts{CWD: dir})
 
-	col := &collector{t: t, done: make(chan struct{})}
-	rt.Subscribe(col.Receive)
-
-	handled, err := rt.HandleCommands(context.Background(), meta, "!pwd")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "!pwd")
 	require.NoError(t, err)
 	require.True(t, handled)
 	// macOS reports /private/var symlinks for TempDir; match on the suffix.
-	require.Contains(t, col.text(), strings.TrimPrefix(dir, "/private"))
+	require.Contains(t, feedback, strings.TrimPrefix(dir, "/private"))
 }
 
 // TestHandleShellReportsFailure verifies a non-zero exit status surfaces to the
@@ -62,24 +61,22 @@ func TestHandleShellReportsFailure(t *testing.T) {
 	rt := New()
 	meta := seedShellSession(t, rt, types.SessionOpts{CWD: os.TempDir()})
 
-	col := &collector{t: t, done: make(chan struct{})}
-	rt.Subscribe(col.Receive)
-
-	handled, err := rt.HandleCommands(context.Background(), meta, "!exit 3")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "!exit 3")
 	require.NoError(t, err)
 	require.True(t, handled)
-	require.Contains(t, col.text(), "exit")
+	require.Contains(t, feedback, "exit")
 }
 
 // TestHandleShellEmptyCommand verifies a bare "!" is handled (consumed) but runs
-// nothing.
+// nothing and returns no feedback.
 func TestHandleShellEmptyCommand(t *testing.T) {
 	rt := New()
 	meta := seedShellSession(t, rt, types.SessionOpts{CWD: os.TempDir()})
 
-	handled, err := rt.HandleCommands(context.Background(), meta, "!   ")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "!   ")
 	require.NoError(t, err)
 	require.True(t, handled)
+	require.Empty(t, feedback)
 }
 
 // TestHandleShellMultiLineIsNotCommand verifies that a multi-line input starting
@@ -89,9 +86,10 @@ func TestHandleShellMultiLineIsNotCommand(t *testing.T) {
 	rt := New()
 	meta := seedShellSession(t, rt, types.SessionOpts{CWD: os.TempDir()})
 
-	handled, err := rt.HandleCommands(context.Background(), meta, "!echo hi\nsecond line")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "!echo hi\nsecond line")
 	require.NoError(t, err)
 	require.False(t, handled)
+	require.Empty(t, feedback)
 }
 
 // TestHandleShellUnknownConversation verifies the command is still consumed
@@ -100,14 +98,15 @@ func TestHandleShellUnknownConversation(t *testing.T) {
 	rt := New()
 	unknown := types.ConversationMeta{ConversationID: "nope"}
 
-	handled, err := rt.HandleCommands(context.Background(), unknown, "!echo hi")
+	handled, _, err := rt.HandleCommands(context.Background(), unknown, "!echo hi")
 	require.True(t, handled)
 	require.Error(t, err)
 }
 
-// TestHandleHelpListsHarnessCommands verifies /help fans back a listing that
+// TestHandleHelpListsHarnessCommands verifies /help returns a listing that
 // includes every built-in harness command and, when the agent has advertised
-// none, omits the agent section entirely.
+// none, omits the agent section entirely. The listing is returned as feedback,
+// not fanned to subscribers.
 func TestHandleHelpListsHarnessCommands(t *testing.T) {
 	rt := New()
 	meta := seedShellSession(t, rt, types.SessionOpts{})
@@ -115,16 +114,16 @@ func TestHandleHelpListsHarnessCommands(t *testing.T) {
 	col := &collector{t: t, done: make(chan struct{})}
 	rt.Subscribe(col.Receive)
 
-	handled, err := rt.HandleCommands(context.Background(), meta, "/help")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "/help")
 	require.NoError(t, err)
 	require.True(t, handled)
+	require.Empty(t, col.text(), "help listing must not be fanned to subscribers")
 
-	out := col.text()
-	require.Contains(t, out, "Harness commands:")
+	require.Contains(t, feedback, "Harness commands:")
 	for _, name := range []string{"/cancel", "/clear", "/exit", "/help", "!"} {
-		require.Contains(t, out, name)
+		require.Contains(t, feedback, name)
 	}
-	require.NotContains(t, out, "Agent commands:")
+	require.NotContains(t, feedback, "Agent commands:")
 }
 
 // TestHandleHelpListsAgentCommandsFirst verifies /help lists the agent's
@@ -139,20 +138,67 @@ func TestHandleHelpListsAgentCommandsFirst(t *testing.T) {
 	}
 	rt.mu.Unlock()
 
-	col := &collector{t: t, done: make(chan struct{})}
-	rt.Subscribe(col.Receive)
-
-	handled, err := rt.HandleCommands(context.Background(), meta, "/help")
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "/help")
 	require.NoError(t, err)
 	require.True(t, handled)
 
-	out := col.text()
-	require.Contains(t, out, "Agent commands:")
-	require.Contains(t, out, "review")
-	require.Contains(t, out, "Review a pull request")
-	require.Contains(t, out, "plan")
-	require.Less(t, strings.Index(out, "Agent commands:"), strings.Index(out, "Harness commands:"),
+	require.Contains(t, feedback, "Agent commands:")
+	require.Contains(t, feedback, "review")
+	require.Contains(t, feedback, "Review a pull request")
+	require.Contains(t, feedback, "plan")
+	require.Less(t, strings.Index(feedback, "Agent commands:"), strings.Index(feedback, "Harness commands:"),
 		"agent commands should be listed before harness commands")
+}
+
+// TestHandleExitReturnsFeedback verifies /exit invokes the registered shutdown
+// hook and returns a confirmation as feedback.
+func TestHandleExitReturnsFeedback(t *testing.T) {
+	rt := New()
+	meta := seedShellSession(t, rt, types.SessionOpts{})
+	called := false
+	rt.OnShutdown(func() { called = true })
+
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "/exit")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.True(t, called, "shutdown hook must be invoked")
+	require.NotEmpty(t, feedback)
+}
+
+// TestHandleUnknownSlashIsNotCommand verifies an unrecognised slash command
+// (e.g. an agent-advertised command like /review) is NOT consumed by the
+// harness — it falls through to be sent to the agent as a prompt.
+func TestHandleUnknownSlashIsNotCommand(t *testing.T) {
+	rt := New()
+	meta := seedShellSession(t, rt, types.SessionOpts{})
+
+	handled, feedback, err := rt.HandleCommands(context.Background(), meta, "/review the PR")
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Empty(t, feedback)
+}
+
+// TestIsCommand verifies the predicate recognises exactly the inputs the harness
+// consumes: leading-slash harness commands and single-line "!" shell escapes.
+func TestIsCommand(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"/clear", true},
+		{"/exit", true},
+		{"/cancel", true},
+		{"/help", true},
+		{"  /clear  ", true},
+		{"!ls", true},
+		{"!echo hi\nmore", false}, // multi-line bang is not a shell escape
+		{"/review the PR", false}, // agent command, sent as prompt
+		{"hello world", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		require.Equalf(t, c.want, IsCommand(c.text), "IsCommand(%q)", c.text)
+	}
 }
 
 // TestOnMessageCapturesAvailableCommands verifies that an available_commands_update
