@@ -62,49 +62,59 @@ func New(rt *router.Router, store db.SessionWriter) *Persister {
 	return p
 }
 
-// Receive records one router event. The session/new response writes the session
-// row; updates, prompts and turn completions append log entries and accumulate
-// telemetry; turn and close boundaries flush that telemetry to the store.
-// Failures are logged but never block the router's receive loop.
+// Receive records one router event. Sessions are keyed by the stable
+// ConversationID (the DB session.id): the row is written when the conversation is
+// created — before, and independent of, the ACP handshake — and the ACP session
+// id is recorded onto it once session/new arrives. Updates, prompts and turn
+// completions append log entries and accumulate telemetry; turn and close
+// boundaries flush that telemetry to the store. Failures are logged but never
+// block the router's receive loop.
 func (p *Persister) Receive(ctx context.Context, rid *json.RawMessage, id types.ConversationMeta, msg any) {
-	sid := string(id.SessionID)
+	cid := id.ConversationID
 	switch m := msg.(type) {
+	case types.ConversationCreated:
+		// Recover the creation options from the router by the conversation's stable id.
+		opts, _ := p.rt.Opts(cid)
+		p.insertSession(cid, opts)
 	case acp.NewSessionResponse:
-		// The response carries only the protocol session id; recover the creation
-		// options from the router by the conversation's stable id.
-		opts, _ := p.rt.Opts(id.ConversationID)
-		p.insertSession(id, opts)
+		// The handshake assigned the ACP session id; record it onto the row that
+		// already exists (created at ConversationCreated).
+		if err := p.store.SetACPSessionID(context.Background(), cid, string(m.SessionId)); err != nil {
+			slog.Error("persistence: set acp session id", "conversation", cid, "error", err)
+		}
 	case acp.SessionNotification:
 		raw, eventType := db.MarshalEvent(m.Update)
-		p.insertLog(sid, eventType, raw)
-		p.observeUpdate(sid, m.Update)
+		p.insertLog(cid, eventType, raw)
+		p.observeUpdate(cid, m.Update)
 	case acp.PromptRequest:
 		var text string
 		if len(m.Prompt) > 0 && m.Prompt[0].Text != nil {
 			text = m.Prompt[0].Text.Text
 		}
 		payload, _ := json.Marshal(map[string]string{"prompt": text})
-		p.insertLog(sid, "prompt", payload)
-		p.beginTurn(sid)
+		p.insertLog(cid, "prompt", payload)
+		p.beginTurn(cid)
 	case acp.PromptResponse:
-		p.insertLog(sid, "prompt_finished", json.RawMessage(`{}`))
-		p.endTurn(sid, m)
+		p.insertLog(cid, "prompt_finished", json.RawMessage(`{}`))
+		p.endTurn(cid, m)
 	case types.ConversationReplaced:
-		p.finish(string(m.Old.SessionID), "")
+		// The old conversation is done; the new one already has its own row from
+		// the ConversationCreated fired during Restart.
+		p.finish(m.Old.ConversationID, "")
 	case types.ConversationClosed:
-		p.finish(string(m.Meta.SessionID), m.Err)
+		p.finish(m.Meta.ConversationID, m.Err)
 	}
 }
 
-func (p *Persister) insertSession(meta types.ConversationMeta, opts types.SessionOpts) {
-	err := p.store.InsertSession(context.Background(), string(meta.SessionID), opts.Source,
+func (p *Persister) insertSession(cid string, opts types.SessionOpts) {
+	err := p.store.InsertSession(context.Background(), cid, opts.Source,
 		opts.Agent, opts.CWD, opts.SandboxType, "", "", opts.ProjectID, opts.Env, p.now())
 	if err != nil {
-		slog.Error("persistence: insert session", "session", meta.SessionID, "error", err)
+		slog.Error("persistence: insert session", "conversation", cid, "error", err)
 		return
 	}
 	p.mu.Lock()
-	p.track[string(meta.SessionID)] = &sessionState{
+	p.track[cid] = &sessionState{
 		info: types.StatusInfo{Status: types.StatusPending},
 	}
 	p.mu.Unlock()

@@ -23,15 +23,17 @@ import (
 // Persistence is handled separately by the persistence package, which subscribes
 // to the same router; WebChannel only deals with the live browser transport.
 //
-// Conversations are keyed externally by their ACP session id string — what the
-// frontend uses in URLs — while internally each maps to a
-// types.ConversationMeta used for prompt routing and closing.
+// Conversations are keyed externally by their ConversationID string — what the
+// frontend uses in URLs and what the DB session row is keyed by — while each maps
+// to a types.ConversationMeta used for prompt routing and closing. The
+// ConversationID is stable from creation (before the ACP handshake), so a window
+// can be addressed even for a conversation whose ACP session never started.
 type WebChannel struct {
 	router *router.Router
 	hub    *Hub
 
 	mu   sync.Mutex
-	byID map[string]types.ConversationMeta // session id string -> conversation meta
+	byID map[string]types.ConversationMeta // conversation id string -> conversation meta
 }
 
 var _ router.Subscriber = (*WebChannel)(nil).Receive
@@ -55,7 +57,7 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 	switch m := msg.(type) {
 	case acp.SessionNotification:
 		raw, eventType := db.MarshalEvent(m.Update)
-		c.publish(string(id.SessionID), eventType, raw)
+		c.publish(id.ConversationID, eventType, raw)
 	case acp.PromptRequest:
 		// Echo the user's prompt so the browser renders it, mirroring how
 		// persisted history replays.
@@ -64,21 +66,22 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 			text = m.Prompt[0].Text.Text
 		}
 		payload, _ := json.Marshal(map[string]string{"prompt": text})
-		c.publish(string(id.SessionID), "prompt", payload)
+		c.publish(id.ConversationID, "prompt", payload)
 	case acp.PromptResponse:
 		// The turn has finished; the frontend draws a separator on this event.
-		c.publish(string(id.SessionID), "prompt_finished", json.RawMessage(`{}`))
+		c.publish(id.ConversationID, "prompt_finished", json.RawMessage(`{}`))
 	case types.ConversationReplaced:
 		c.handleReplaced(m)
 	}
 }
 
-// handleReplaced re-keys a conversation after /clear restarts it and tells the
-// old session's page to navigate to the new one. The new session's row is written
-// by the persistence subscriber off the same session/new response.
+// handleReplaced re-keys a conversation after /clear restarts it (which mints a
+// fresh ConversationID) and tells the old page to navigate to the new one. The
+// new conversation's row is written by the persistence subscriber off the
+// ConversationCreated fired during Restart.
 func (c *WebChannel) handleReplaced(rep types.ConversationReplaced) {
-	oldID := string(rep.Old.SessionID)
-	newID := string(rep.New.SessionID)
+	oldID := rep.Old.ConversationID
+	newID := rep.New.ConversationID
 
 	c.mu.Lock()
 	_, ok := c.byID[oldID]
@@ -102,8 +105,11 @@ func (c *WebChannel) publish(sessionID, eventType string, raw json.RawMessage) {
 }
 
 // StartSessionWeb creates a new conversation through the router and returns its
-// ACP session id, which the frontend uses as the session URL key. Implements
-// SessionCreator.
+// ConversationID, which the frontend uses as the session URL key. Implements
+// SessionCreator. The id is stable from creation, so it is returned immediately
+// after Create — no need to wait for the ACP handshake; the persistence
+// subscriber has already written the session row (ConversationCreated is fanned
+// synchronously within Create).
 func (c *WebChannel) StartSessionWeb(dir, agent, sandboxType, sandboxProfiles, projectName string) (string, error) {
 	// Leave Sandbox nil: Router.Create resolves it, folding the project's
 	// .acpp.yaml (which is where profiles like "docker" live) over these
@@ -121,20 +127,25 @@ func (c *WebChannel) StartSessionWeb(dir, agent, sandboxType, sandboxProfiles, p
 	if err != nil {
 		return "", err
 	}
-	// The web UI keys sessions by their ACP session id (used in URLs and DB rows),
-	// which the async handshake fills in after Create returns — wait for it. By the
-	// time WaitReady returns, the persistence subscriber has written the session
-	// row (the session/new response is fanned out before WaitReady unblocks).
-	id, err = c.router.WaitReady(context.Background(), id)
-	if err != nil {
-		return "", err
-	}
 
-	sessionID := string(id.SessionID)
 	c.mu.Lock()
-	c.byID[sessionID] = id
+	c.byID[id.ConversationID] = id
 	c.mu.Unlock()
-	return sessionID, nil
+	return id.ConversationID, nil
+}
+
+// StartFailedSessionWeb records a stillborn conversation whose ACP session could
+// not be started (e.g. no working directory could be resolved), returning its
+// ConversationID. The conversation is persisted with the failure surfaced as an
+// error message and marked errored, so the frontend can open its window and show
+// what went wrong. Implements SessionCreator.
+func (c *WebChannel) StartFailedSessionWeb(dir, projectName, errMsg string) string {
+	meta := c.router.CreateError(context.Background(), types.SessionOpts{
+		ProjectID: projectName,
+		CWD:       dir,
+		Source:    "web",
+	}, errMsg)
+	return meta.ConversationID
 }
 
 // SubmitPrompt routes a user prompt to the conversation backing sessionID. A

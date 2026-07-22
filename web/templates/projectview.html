@@ -54,6 +54,8 @@
   .msg-user .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #2563eb; margin-bottom: 0.375em; }
   .msg-assistant { background: #fff; border: 1px solid #e7e5e4; border-left: 3px solid #8b5cf6; }
   .msg-assistant .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #7c3aed; margin-bottom: 0.375em; }
+  .msg-error { background: #fef2f2; border: 1px solid #fecaca; border-left: 3px solid #dc2626; }
+  .msg-error .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #dc2626; margin-bottom: 0.375em; }
   .msg-thought { background: #fafaf9; border: 1px solid #e7e5e4; border-left: 3px solid #a8a29e; font-style: italic; }
   .msg-thought .msg-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #a8a29e; margin-bottom: 0.375em; }
   .msg-content { white-space: pre-wrap; word-break: break-word; font-size: 0.875em; line-height: 1.65; color: #1c1917; }
@@ -170,7 +172,7 @@
       {{end}}
       <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
       {{end}}
-      {{if and .CreatorEnabled .ActiveDir}}
+      {{if .CreatorEnabled}}
       <button type="button" class="stop-btn" id="new-conversation-btn">new</button>
       {{end}}
     </div>
@@ -474,6 +476,18 @@
         break;
       case 'agent_message_chunk':
         closeThoughtBlock();
+        // Harness-originated error (e.g. the ACP session could not be created):
+        // rendered as a distinct error block rather than agent output.
+        if (p._meta && p._meta.acpp && p._meta.acpp.type === 'error') {
+          closeAssistantBlock();
+          var errDiv = document.createElement('div');
+          errDiv.className = 'msg msg-error';
+          var errText = (p.content && p.content.text) ? p.content.text : 'The ACP session could not be created.';
+          errDiv.innerHTML = '<div class="msg-label">Error</div><div class="msg-content"></div>';
+          errDiv.querySelector('.msg-content').textContent = errText;
+          container.appendChild(errDiv);
+          break;
+        }
         if (p.content && p.content.type === 'text' && p.content.text) {
           assistantText += p.content.text;
           flushAssistantIncremental();
@@ -692,7 +706,7 @@
           btn.textContent = 'Send';
           input.focus();
         });
-      } else if (creatorEnabled && activeDir) {
+      } else if (creatorEnabled) {
         // Create a new session in-place (no page reload)
         sending = true;
         btn.disabled = true;
@@ -702,11 +716,16 @@
         fetch('/projects/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir: activeDir })
+          body: JSON.stringify({ project: activeProject, dir: activeDir })
         }).then(function(r) {
           if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
           return r.json();
         }).then(function(data) {
+          // Directory unresolved: navigate to the stillborn window showing the error.
+          if (data.failed) {
+            window.location.href = '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(data.id);
+            return;
+          }
           // Switch to the new session in-place
           sessionId = data.id;
           isSessionRunning = true;
@@ -775,18 +794,24 @@
     // "New session" starts a fresh session in place (no prompt yet) and returns
     // the prompt bar to normal Send mode so the next message goes to it.
     function startNewSession() {
-      if (!(creatorEnabled && activeDir) || sending) return;
+      if (!creatorEnabled || sending) return;
       sending = true;
       newSessionBtn.disabled = true;
       newSessionBtn.textContent = 'Creating...';
       fetch('/projects/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: activeDir })
+        body: JSON.stringify({ project: activeProject, dir: activeDir })
       }).then(function(r) {
         if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
         return r.json();
       }).then(function(data) {
+        // The directory could not be resolved: navigate to the stillborn
+        // conversation's window, which already holds the persisted error message.
+        if (data.failed) {
+          window.location.href = '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(data.id);
+          return;
+        }
         sessionId = data.id;
         isSessionRunning = true;
 

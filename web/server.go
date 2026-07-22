@@ -45,20 +45,25 @@ type SessionCloser interface {
 // SessionCreator can create a new session and return its ID.
 type SessionCreator interface {
 	StartSessionWeb(dir string, agent string, sandbox string, sandboxProfiles string, projectName string) (string, error)
+	// StartFailedSessionWeb records a conversation that could not start an ACP
+	// session (e.g. its directory could not be resolved) and returns its id so the
+	// frontend can open the window that holds the persisted failure message.
+	StartFailedSessionWeb(dir, projectName, errMsg string) string
 }
 
 // Server is the web UI server.
 type Server struct {
-	store      db.SessionReader
-	closer     SessionCloser
-	creator    SessionCreator
-	projects   db.ProjectStore
-	defaults   SessionDefaults
-	echo       *echo.Echo
-	addr       string
-	hub        *Hub
-	webChannel *WebChannel
-	upgrader   websocket.Upgrader
+	store       db.SessionReader
+	closer      SessionCloser
+	creator     SessionCreator
+	projects    db.ProjectStore
+	defaults    SessionDefaults
+	searchPaths []string
+	echo        *echo.Echo
+	addr        string
+	hub         *Hub
+	webChannel  *WebChannel
+	upgrader    websocket.Upgrader
 }
 
 // SessionDefaults holds default values shown in the new-session form.
@@ -192,6 +197,14 @@ func (s *Server) WithProjects(projects db.ProjectStore) *Server {
 // WithDefaults sets the default values shown in the new-session form.
 func (s *Server) WithDefaults(defaults SessionDefaults) *Server {
 	s.defaults = defaults
+	return s
+}
+
+// WithSearchPaths sets the base directories searched to resolve a project's
+// working directory by name when a session is started without an explicit dir
+// (mirroring how Discord resolves a channel name).
+func (s *Server) WithSearchPaths(paths []string) *Server {
+	s.searchPaths = paths
 	return s
 }
 

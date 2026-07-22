@@ -127,6 +127,18 @@ func (m *MemStore) FinishSession(ctx context.Context, id string, info acplib.Sta
 	return nil
 }
 
+func (m *MemStore) SetACPSessionID(ctx context.Context, id, acpSessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	s.ACPSessionID = acpSessionID
+	m.sessions[id] = s
+	return nil
+}
+
 func (m *MemStore) AddPromptDuration(ctx context.Context, id string, durationMs int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

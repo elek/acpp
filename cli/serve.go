@@ -96,6 +96,7 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	srv := web.New(store, addr).
 		WithProjects(store).
 		WithRouter(rt).
+		WithSearchPaths(searchPaths).
 		WithDefaults(web.SessionDefaults{
 			Agent:   agent,
 			Sandbox: cfg.Defaults.Sandbox,

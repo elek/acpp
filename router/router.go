@@ -166,11 +166,17 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	r.sessions[convID] = state
 	r.mu.Unlock()
 
+	// Announce the conversation before the handshake runs: subscribers fire
+	// synchronously on this goroutine, so the persister has written the session
+	// row (keyed by the stable ConversationID) before any ACP update can arrive
+	// and before Create returns.
+	r.Receive(ctx, nil, meta, types.ConversationCreated{Meta: meta})
+
 	// Every inbound message is tagged with this conversation's stable id; the
 	// receive loop never needs to learn a new key even after the session id is
 	// assigned, because the map is keyed by the UUID, not the meta.
 	handler := func(ctx context.Context, rid *json.RawMessage, msg any) {
-		r.onMessage(ctx, convID, rid, msg)
+		r.onMessage(ctx, state, rid, msg)
 	}
 
 	connection := acp.NewClientSideConnection(handler, ps.Stdin, ps.Stdout)
@@ -199,9 +205,43 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	// Finalize the conversation if the subprocess ever exits without a deliberate
 	// close, so a lost turn completion can never wedge the conversation (or a
 	// scheduled job) forever.
-	go r.watchProcess(convID, ps)
+	go r.watchProcess(state, ps)
 
 	return meta, nil
+}
+
+// CreateError records a stillborn conversation: one that could not start an ACP
+// session at all (e.g. its working directory could not be resolved). It mints a
+// conversation id, announces the conversation so the persister writes its row,
+// fans a single agent_message_chunk carrying the failure text and a
+// _meta.acpp.type=error marker (so surfaces can render it as a harness error
+// rather than agent output), then closes it as errored. No subprocess is started,
+// so its ACP SessionID stays empty. Returns the conversation meta.
+func (r *Router) CreateError(ctx context.Context, opts types.SessionOpts, errMsg string) types.ConversationMeta {
+	convID := uuid.NewString()
+	meta := types.ConversationMeta{
+		ProjectID:      opts.ProjectID,
+		ConversationID: convID,
+	}
+	// Register minimal state (no process, no connection) so Router.Opts can supply
+	// the creation options when the persister writes the row on ConversationCreated.
+	r.mu.Lock()
+	r.sessions[convID] = &SessionState{meta: meta, opts: opts}
+	r.mu.Unlock()
+
+	// Subscribers run synchronously: the row is written, then the error message is
+	// logged against it, then the conversation is closed as errored — in order.
+	r.Receive(ctx, nil, meta, types.ConversationCreated{Meta: meta})
+	r.Receive(ctx, nil, meta, acp.SessionNotification{
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Meta:    map[string]any{"acpp": map[string]any{"type": "error"}},
+				Content: acp.TextBlock(errMsg),
+			},
+		},
+	})
+	r.closeConversation(meta, errMsg)
+	return meta
 }
 
 // resolveProject loads the conversation's .acpp.yaml (from opts.CWD) and folds it
@@ -259,18 +299,17 @@ func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
 // async handshake — initialize response triggers session/new; the session/new
 // response fills in the SessionID and unblocks WaitReady — and fans everything
 // else out to subscribers tagged with the conversation's current meta.
-func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMessage, msg any) {
+func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.RawMessage, msg any) {
+	// state is captured by the receive-loop handler at Create, so it stays valid
+	// even after Restart re-keys the session map under a fresh ConversationID —
+	// looking the state up by a captured key would break delivery post-/clear.
 	switch m := msg.(type) {
 	case acp.InitializeResponse:
 		r.mu.Lock()
-		state := r.sessions[convID]
-		var conn *acp.ClientSideConnection
-		var cwd string
-		if state != nil {
-			state.acpInit = m
-			conn = state.connection
-			cwd = state.opts.CWD
-		}
+		state.acpInit = m
+		conn := state.connection
+		cwd := state.opts.CWD
+		cid := state.meta.ConversationID
 		r.mu.Unlock()
 		if conn == nil {
 			return
@@ -279,30 +318,22 @@ func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMess
 			Cwd:        cwd,
 			McpServers: []acp.McpServer{},
 		}); err != nil {
-			slog.Error("router: send session/new", "conversation_id", convID, "error", err)
+			slog.Error("router: send session/new", "conversation_id", cid, "error", err)
 		}
 		return
 	case acp.NewSessionResponse:
 		r.mu.Lock()
-		state := r.sessions[convID]
-		var ready chan struct{}
-		var meta types.ConversationMeta
-		if state != nil {
-			state.sessionData = m
-			state.meta.SessionID = m.SessionId
-			ready, state.ready = state.ready, nil
-			meta = state.meta
-		}
+		state.sessionData = m
+		state.meta.SessionID = m.SessionId
+		ready := state.ready
+		state.ready = nil
+		meta := state.meta
 		r.mu.Unlock()
-		if state == nil {
-			return
-		}
 		// Fan out the raw session/new response before closing ready: subscribers
-		// run synchronously on this goroutine, so a persister has written the
-		// session row by the time a caller resumes from WaitReady (and before any
-		// update logs arrive). The meta already carries the freshly assigned
-		// SessionID; subscribers needing the creation options fetch them via
-		// Router.Opts.
+		// run synchronously on this goroutine, so a persister has recorded the
+		// ACP session id by the time a caller resumes from WaitReady. The meta
+		// already carries the freshly assigned SessionID; subscribers needing the
+		// creation options fetch them via Router.Opts.
 		r.deliver(ctx, state, rid, meta, m)
 		if ready != nil {
 			close(ready)
@@ -310,16 +341,12 @@ func (r *Router) onMessage(ctx context.Context, convID string, rid *json.RawMess
 		return
 	default:
 		r.mu.Lock()
-		state := r.sessions[convID]
-		var meta types.ConversationMeta
-		if state != nil {
-			meta = state.meta
-			// Capture the agent's advertised commands so /help can list them; this
-			// notification is the only place the agent exposes them.
-			if n, ok := msg.(acp.SessionNotification); ok && n.Update.AvailableCommandsUpdate != nil {
-				state.availableCommands = n.Update.AvailableCommandsUpdate.AvailableCommands
-			}
+		// Capture the agent's advertised commands so /help can list them; this
+		// notification is the only place the agent exposes them.
+		if n, ok := msg.(acp.SessionNotification); ok && n.Update.AvailableCommandsUpdate != nil {
+			state.availableCommands = n.Update.AvailableCommandsUpdate.AvailableCommands
 		}
+		meta := state.meta
 		r.mu.Unlock()
 		r.deliver(ctx, state, rid, meta, msg)
 	}
@@ -396,21 +423,35 @@ func (r *Router) Active(conversationID string) bool {
 // channels can react (re-key by session id, reset buffers, …). Returns the
 // updated meta.
 func (r *Router) Restart(ctx context.Context, id types.ConversationMeta) (types.ConversationMeta, error) {
+	newConvID := uuid.NewString()
 	r.mu.Lock()
 	state, ok := r.sessions[id.ConversationID]
-	var old types.ConversationMeta
+	var old, fresh types.ConversationMeta
 	if ok {
 		old = state.meta
+		// One conversation per session: rather than reuse the ConversationID (which
+		// would fold the restarted session's history into the old row), roll it and
+		// re-key the map. The subprocess is reused; only the conversation identity
+		// changes. Delivery survives the re-key because the receive-loop handler and
+		// watchProcess hold the state pointer, not the map key.
+		delete(r.sessions, old.ConversationID)
+		state.meta.ConversationID = newConvID
 		state.meta.SessionID = ""
 		state.ready = make(chan struct{})
 		// Discard the prior session's advertised commands; the fresh session will
 		// re-advertise its own via available_commands_update.
 		state.availableCommands = nil
+		r.sessions[newConvID] = state
+		fresh = state.meta
 	}
 	r.mu.Unlock()
 	if !ok {
 		return types.ConversationMeta{}, fmt.Errorf("router: unknown conversation %v", id)
 	}
+
+	// Announce the fresh conversation (new id, same process) before the handshake,
+	// mirroring Create, so the persister writes its row first.
+	r.Receive(ctx, nil, fresh, types.ConversationCreated{Meta: fresh})
 
 	if err := state.connection.Send(ctx, acp.NewSessionRequest{
 		Cwd:        state.opts.CWD,
@@ -419,7 +460,7 @@ func (r *Router) Restart(ctx context.Context, id types.ConversationMeta) (types.
 		return types.ConversationMeta{}, fmt.Errorf("router: restart conversation %v: %w", id, err)
 	}
 
-	newMeta, err := r.WaitReady(ctx, id)
+	newMeta, err := r.WaitReady(ctx, fresh)
 	if err != nil {
 		return types.ConversationMeta{}, fmt.Errorf("router: restart conversation %v: %w", id, err)
 	}
@@ -575,24 +616,25 @@ func (r *Router) closeConversation(id types.ConversationMeta, errMsg string) {
 // scheduled job that started it never releases (every later tick is skipped as
 // "previous run still active"). Fanning an errored ConversationClosed lets every
 // subscriber finalize.
-func (r *Router) watchProcess(convID string, ps *process.Process) {
+func (r *Router) watchProcess(state *SessionState, ps *process.Process) {
 	select {
 	case <-ps.Done():
 	case <-r.ctx.Done():
 		return
 	}
+	// Read the current meta from state (not a captured key): Restart may have
+	// rolled the ConversationID while reusing this same process. Confirm the
+	// conversation is still registered under its current id before finalizing, so
+	// a deliberate close that already removed it stays a no-op.
 	r.mu.RLock()
-	state, ok := r.sessions[convID]
-	var meta types.ConversationMeta
-	if ok {
-		meta = state.meta
-	}
+	meta := state.meta
+	_, ok := r.sessions[meta.ConversationID]
 	r.mu.RUnlock()
 	if !ok {
 		return
 	}
 	slog.Warn("agent subprocess exited before its conversation was closed; finalizing",
-		"conversation_id", convID, "pid", meta.ProcessPID)
+		"conversation_id", meta.ConversationID, "pid", meta.ProcessPID)
 	r.closeConversation(meta, "agent subprocess exited before completing the turn")
 }
 

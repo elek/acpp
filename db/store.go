@@ -54,6 +54,7 @@ type ProjectStore interface {
 type SessionWriter interface {
 	CompleteRunningSessions(ctx context.Context) (int64, error)
 	InsertSession(ctx context.Context, id, sourceName, agent, dir, sandbox, node, gitCommit, projectName string, env []string, createdAt time.Time) error
+	SetACPSessionID(ctx context.Context, id, acpSessionID string) error
 	UpdateSession(ctx context.Context, id string, info acplib.StatusInfo) error
 	FinishSession(ctx context.Context, id string, info acplib.StatusInfo, sessionError string) error
 	AddPromptDuration(ctx context.Context, id string, durationMs int64) error
@@ -123,6 +124,14 @@ func (s *PostgresStore) InsertSession(ctx context.Context, id, sourceName, agent
 		id, sourceName, filepath.Base(agent), dir, sandbox, node, gitCommit, projectName, envJSON, string(acplib.StatusPending), createdAt,
 	)
 	return errors.Wrap(err, "inserting session")
+}
+
+// SetACPSessionID records the ACP session id assigned by the agent handshake on
+// the conversation-keyed session row. Called once the session/new response
+// arrives; the row itself is created earlier (at conversation creation).
+func (s *PostgresStore) SetACPSessionID(ctx context.Context, id, acpSessionID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE session SET acp_session_id = $2 WHERE id = $1`, id, acpSessionID)
+	return errors.Wrap(err, "setting acp session id")
 }
 
 // UpdateSession updates the session's status, model, and usage statistics.
@@ -209,6 +218,7 @@ func (s *PostgresStore) InsertLog(ctx context.Context, sessionID, eventType stri
 // SessionRow holds a session record from the database.
 type SessionRow struct {
 	ID                       string
+	ACPSessionID             string
 	SourceName               string
 	Agent                    string
 	Dir                      string

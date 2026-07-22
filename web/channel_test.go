@@ -43,7 +43,7 @@ func TestWebChannel_ReceivePublishesAgentMessage(t *testing.T) {
 	sub := hub.Subscribe(sessionID)
 	defer hub.Unsubscribe(sessionID, sub)
 
-	id := types.ConversationMeta{SessionID: acp.SessionId(sessionID)}
+	id := types.ConversationMeta{ConversationID: sessionID, SessionID: acp.SessionId(sessionID)}
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.TextBlock("hello")},
 	}
@@ -88,7 +88,7 @@ func TestWebChannel_PromptResponsePublishesFinished(t *testing.T) {
 	sub := hub.Subscribe(sessionID)
 	defer hub.Unsubscribe(sessionID, sub)
 
-	id := types.ConversationMeta{SessionID: acp.SessionId(sessionID)}
+	id := types.ConversationMeta{ConversationID: sessionID, SessionID: acp.SessionId(sessionID)}
 	c.Receive(context.Background(), nil, id, acp.PromptResponse{})
 
 	select {
@@ -168,18 +168,18 @@ func TestWebChannel_ConversationReplacedNavigatesOldSession(t *testing.T) {
 	hub := NewHub()
 	c := newTestChannel(hub)
 
-	oldID := "old-sess"
-	newID := "new-sess"
-	old := types.ConversationMeta{SessionID: acp.SessionId(oldID)}
+	oldID := "old-conv"
+	newID := "new-conv"
+	old := types.ConversationMeta{ConversationID: oldID}
 	c.byID[oldID] = old
 
-	// The page holding the WebSocket is the OLD session's page.
+	// The page holding the WebSocket is the OLD conversation's page.
 	sub := hub.Subscribe(oldID)
 	defer hub.Unsubscribe(oldID, sub)
 
 	c.Receive(context.Background(), nil, old, types.ConversationReplaced{
 		Old: old,
-		New: types.ConversationMeta{SessionID: acp.SessionId(newID)},
+		New: types.ConversationMeta{ConversationID: newID},
 	})
 
 	select {

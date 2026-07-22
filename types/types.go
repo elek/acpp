@@ -18,6 +18,16 @@ type ConversationMeta struct {
 	SessionID      acp.SessionId
 }
 
+// ConversationCreated is emitted through the router's subscriber stream the
+// moment a conversation is registered — synchronously within Router.Create,
+// before the ACP handshake assigns a SessionID. Subscribers use it to establish
+// per-conversation state keyed by the stable ConversationID; the persister writes
+// the session row here (so a conversation has a durable home even if its ACP
+// session never initializes, e.g. a working directory could not be resolved).
+type ConversationCreated struct {
+	Meta ConversationMeta
+}
+
 // ConversationReplaced is emitted through the router's subscriber stream when a
 // conversation's underlying session is swapped (e.g. via /clear), changing its
 // ConversationMeta. Subscribers that key off ConversationMeta (such as channels

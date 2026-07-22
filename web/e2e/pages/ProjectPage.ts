@@ -14,6 +14,7 @@ export class ProjectPage {
   readonly sessionSelect: Locator;
   readonly conversation: Locator;
   readonly assistantMessages: Locator;
+  readonly errorMessages: Locator;
   readonly separators: Locator;
   readonly commandEchoes: Locator;
   readonly commandResponses: Locator;
@@ -32,6 +33,8 @@ export class ProjectPage {
     this.sessionSelect = page.locator('#session-select');
     this.conversation = page.locator('#conversation');
     this.assistantMessages = page.locator('#conversation .msg-assistant .msg-content');
+    // Harness-originated error block (e.g. the ACP session could not be created).
+    this.errorMessages = page.locator('#conversation .msg-error .msg-content');
     this.separators = page.locator('#conversation .prompt-separator');
     this.commandEchoes = page.locator('#conversation .msg-command .msg-content');
     this.commandResponses = page.locator('#conversation .msg-command-response .msg-content');

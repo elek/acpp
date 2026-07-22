@@ -16,10 +16,14 @@ import (
 func feed(t *testing.T, p *Persister, store *db.MemStore, meta types.ConversationMeta, msgs ...any) db.SessionRow {
 	t.Helper()
 	ctx := context.Background()
+	// A conversation is always created before any updates flow: this is what
+	// writes the session row (keyed by ConversationID), independent of the ACP
+	// handshake.
+	p.Receive(ctx, nil, meta, types.ConversationCreated{Meta: meta})
 	for _, m := range msgs {
 		p.Receive(ctx, nil, meta, m)
 	}
-	row, err := store.GetSession(ctx, string(meta.SessionID))
+	row, err := store.GetSession(ctx, meta.ConversationID)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
@@ -124,6 +128,72 @@ func TestPersister_FinishOnClose(t *testing.T) {
 	}
 	if row.FinishedAt == nil {
 		t.Error("FinishedAt = nil, want a timestamp")
+	}
+}
+
+// TestPersister_SetsACPSessionID verifies the ACP session id from the handshake
+// is recorded onto the conversation-keyed row.
+func TestPersister_SetsACPSessionID(t *testing.T) {
+	store := db.NewMemStore()
+	p := New(router.New(), store)
+
+	meta := types.ConversationMeta{ConversationID: "conv-acp", SessionID: acp.SessionId("acp-xyz")}
+	row := feed(t, p, store, meta, acp.NewSessionResponse{SessionId: meta.SessionID})
+
+	if row.ID != "conv-acp" {
+		t.Errorf("row id = %q, want conv-acp (the conversation id)", row.ID)
+	}
+	if row.ACPSessionID != "acp-xyz" {
+		t.Errorf("ACPSessionID = %q, want acp-xyz", row.ACPSessionID)
+	}
+}
+
+// TestPersister_StillbornErrorFlow verifies a conversation created and closed
+// without ever completing an ACP handshake still persists an errored row with the
+// harness error message logged against it and no ACP session id.
+func TestPersister_StillbornErrorFlow(t *testing.T) {
+	store := db.NewMemStore()
+	p := New(router.New(), store)
+	ctx := context.Background()
+
+	meta := types.ConversationMeta{ConversationID: "conv-fail"}
+	p.Receive(ctx, nil, meta, types.ConversationCreated{Meta: meta})
+	p.Receive(ctx, nil, meta, acp.SessionNotification{
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Meta:    map[string]any{"acpp": map[string]any{"type": "error"}},
+				Content: acp.TextBlock("no directory found"),
+			},
+		},
+	})
+	p.Receive(ctx, nil, meta, types.ConversationClosed{Meta: meta, Err: "no directory found"})
+
+	row, err := store.GetSession(ctx, "conv-fail")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if row.Status != string(types.StatusError) {
+		t.Errorf("Status = %q, want error", row.Status)
+	}
+	if row.ACPSessionID != "" {
+		t.Errorf("ACPSessionID = %q, want empty (stillborn)", row.ACPSessionID)
+	}
+	if row.FinishedAt == nil {
+		t.Error("FinishedAt = nil, want a timestamp")
+	}
+
+	logs, err := store.GetSessionLogs(ctx, "conv-fail")
+	if err != nil {
+		t.Fatalf("GetSessionLogs: %v", err)
+	}
+	var found bool
+	for _, l := range logs {
+		if l.EventType == "agent_message_chunk" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected an agent_message_chunk log carrying the error message")
 	}
 }
 

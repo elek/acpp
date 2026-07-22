@@ -8,14 +8,13 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/acp/helpers"
+	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
 	"github.com/pkg/errors"
@@ -298,7 +297,7 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 	}
 	name := ch.Name
 
-	cwd, ok := c.findProjectDir(name)
+	cwd, ok := config.FindProjectDir(c.searchPaths, name)
 	if !ok {
 		return types.ConversationMeta{}, errors.Errorf("no project directory named %q found in search paths", name)
 	}
@@ -322,21 +321,6 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 	c.channelByProject[id.ProjectID] = channelID
 	c.mu.Unlock()
 	return id, nil
-}
-
-// findProjectDir searches searchPaths for a directory named name and returns its
-// absolute path.
-func (c *DiscordChannel) findProjectDir(name string) (string, bool) {
-	if name == "" {
-		return "", false
-	}
-	for _, base := range c.searchPaths {
-		candidate := filepath.Join(base, name)
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, true
-		}
-	}
-	return "", false
 }
 
 // buildPrompt assembles ACP content blocks from message text and image attachments.

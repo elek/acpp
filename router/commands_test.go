@@ -207,7 +207,11 @@ func TestOnMessageCapturesAvailableCommands(t *testing.T) {
 	rt := New()
 	meta := seedShellSession(t, rt, types.SessionOpts{})
 
-	rt.onMessage(context.Background(), meta.ConversationID, nil, acp.SessionNotification{
+	rt.mu.RLock()
+	state := rt.sessions[meta.ConversationID]
+	rt.mu.RUnlock()
+
+	rt.onMessage(context.Background(), state, nil, acp.SessionNotification{
 		SessionId: meta.SessionID,
 		Update: acp.SessionUpdate{
 			AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{

@@ -113,7 +113,7 @@ func TestSubprocessExitFinalizesConversation(t *testing.T) {
 		defer store.Close()
 
 		require.Eventually(t, func() bool {
-			row, err := store.GetSession(ctx, string(id.SessionID))
+			row, err := store.GetSession(ctx, id.ConversationID)
 			if err != nil {
 				return false
 			}

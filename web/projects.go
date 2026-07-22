@@ -1,10 +1,12 @@
 package web
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
 
+	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/db"
 
 	"github.com/labstack/echo/v4"
@@ -100,24 +102,39 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session creation not available"})
 	}
 	var body struct {
-		Dir    string `json:"dir"`
-		Prompt string `json:"prompt"`
+		Project string `json:"project"`
+		Dir     string `json:"dir"`
+		Prompt  string `json:"prompt"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	if body.Dir == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "dir is required"})
-	}
 
-	agent := s.defaults.Agent
-	sandbox := s.defaults.Sandbox
-	projectName := filepath.Base(body.Dir)
+	// A dir is not required: like Discord, resolve it from search_path by the
+	// project name when unset. The project name is the explicit field if given,
+	// else the base of the dir.
+	dir := body.Dir
+	projectName := body.Project
+	if projectName == "" {
+		projectName = filepath.Base(dir)
+	}
 	if projectName == "" || projectName == "." || projectName == "/" {
 		projectName = "default"
 	}
 
-	sessionID, err := s.creator.StartSessionWeb(body.Dir, agent, sandbox, "", projectName)
+	if dir == "" {
+		if resolved, ok := config.FindProjectDir(s.searchPaths, projectName); ok {
+			dir = resolved
+		} else {
+			// No directory could be found: record a stillborn conversation carrying
+			// the failure so the frontend can open its window and show what happened.
+			msg := fmt.Sprintf("Could not start a session: no directory named %q found in the search paths. Set the project's directory or add its parent to search_path.", projectName)
+			id := s.creator.StartFailedSessionWeb(dir, projectName, msg)
+			return c.JSON(http.StatusCreated, map[string]string{"id": id, "dir": "", "failed": "true"})
+		}
+	}
+
+	sessionID, err := s.creator.StartSessionWeb(dir, s.defaults.Agent, s.defaults.Sandbox, "", projectName)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -129,5 +146,5 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusCreated, map[string]string{"id": sessionID, "dir": filepath.Base(body.Dir)})
+	return c.JSON(http.StatusCreated, map[string]string{"id": sessionID, "dir": filepath.Base(dir)})
 }

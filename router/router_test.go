@@ -143,6 +143,58 @@ func TestCloseConversationFansClosed(t *testing.T) {
 	require.Equal(t, meta.SessionID, got[0].Meta.SessionID)
 }
 
+// TestCreateErrorFansStillbornConversation verifies CreateError records a
+// conversation with no subprocess: it fans ConversationCreated, then an
+// agent_message_chunk carrying the _meta.acpp error marker and the failure text,
+// then an errored ConversationClosed — in that order — and drops the conversation.
+func TestCreateErrorFansStillbornConversation(t *testing.T) {
+	rt := New()
+
+	var mu sync.Mutex
+	var order []string
+	var errText string
+	var errMarked bool
+	var closedErr string
+	rt.Subscribe(func(_ context.Context, _ *json.RawMessage, _ types.ConversationMeta, msg any) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch m := msg.(type) {
+		case types.ConversationCreated:
+			order = append(order, "created")
+		case acp.SessionNotification:
+			order = append(order, "notification")
+			if c := m.Update.AgentMessageChunk; c != nil {
+				if c.Content.Text != nil {
+					errText = c.Content.Text.Text
+				}
+				if acpp, ok := c.Meta["acpp"].(map[string]any); ok && acpp["type"] == "error" {
+					errMarked = true
+				}
+			}
+		case types.ConversationClosed:
+			order = append(order, "closed")
+			closedErr = m.Err
+		}
+	})
+
+	meta := rt.CreateError(context.Background(), types.SessionOpts{ProjectID: "p", Source: "web"}, "boom")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"created", "notification", "closed"}, order)
+	require.True(t, errMarked, "error chunk must carry _meta.acpp.type=error")
+	require.Equal(t, "boom", errText)
+	require.Equal(t, "boom", closedErr)
+	require.Empty(t, string(meta.SessionID), "stillborn conversation has no ACP session id")
+	require.NotEmpty(t, meta.ConversationID)
+
+	// The conversation must not linger in the router.
+	rt.mu.RLock()
+	_, ok := rt.sessions[meta.ConversationID]
+	rt.mu.RUnlock()
+	require.False(t, ok, "stillborn conversation should be dropped after close")
+}
+
 // TestConversationFinalizedOnSubprocessExit verifies that when an agent
 // subprocess exits on its own (crash, OOM-kill, quitting mid-turn without
 // sending a session/prompt response) the router finalizes the conversation: it
