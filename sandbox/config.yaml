@@ -10,6 +10,7 @@ base:
     - /usr/share/terminfo
     - /usr/share/ca-certificates
     - /usr/share/zoneinfo
+    - /usr/include
 
 etc:
   ro-bind:
