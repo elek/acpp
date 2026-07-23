@@ -165,11 +165,15 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	// func run when the conversation is finalized. On error, unwind the cleanups
 	// already collected and abort before starting anything.
 	var cleanups []func()
+	// Harness notices queued by session hooks (via sc.Notify) are emitted after the
+	// conversation is announced so they land as its first messages, in order.
+	var notices []string
 	sc := hook.SessionContext{
 		Meta:                  types.ConversationMeta{ProjectID: opts.ProjectID, ConversationID: convID},
 		ConversationID:        convID,
 		BaseDir:               baseDir,
 		RunningSessionsForDir: r.runningSessionsForDir,
+		Notify:                func(text string) { notices = append(notices, text) },
 	}
 	for _, h := range hooks {
 		sh, ok := h.(hook.SessionHook)
@@ -227,6 +231,22 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	// row (keyed by the stable ConversationID) before any ACP update can arrive
 	// and before Create returns.
 	r.Receive(ctx, nil, meta, types.ConversationCreated{Meta: meta})
+
+	// Emit any harness notices a session hook queued (e.g. the worktree hook
+	// naming the worktree it created) as the conversation's first messages: after
+	// ConversationCreated so they persist against the row, before any agent output.
+	// Tagged _meta.acpp.type=notice so surfaces render them as harness notices
+	// rather than agent output.
+	for _, text := range notices {
+		r.Receive(ctx, nil, meta, acp.SessionNotification{
+			Update: acp.SessionUpdate{
+				AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+					Meta:    map[string]any{"acpp": map[string]any{"type": "notice"}},
+					Content: acp.TextBlock(text),
+				},
+			},
+		})
+	}
 
 	// Every inbound message is tagged with this conversation's stable id; the
 	// receive loop never needs to learn a new key even after the session id is

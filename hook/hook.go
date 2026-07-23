@@ -58,6 +58,12 @@ type SessionContext struct {
 	// given base directory, letting a hook decide whether a directory is under
 	// contention. The session being created is not yet counted.
 	RunningSessionsForDir func(dir string) int
+	// Notify queues a harness message to be shown as one of the session's first
+	// messages. It is emitted by the router after the conversation is announced
+	// (so it is persisted and ordered before any agent output), rendered as a
+	// harness notice rather than agent output. A SessionHook uses it to explain a
+	// setup action it took, e.g. the worktree hook naming the worktree it created.
+	Notify func(text string)
 }
 
 // SessionHook is an OPTIONAL interface a Hook may also implement to participate

@@ -77,6 +77,10 @@ func (h *WorktreeHook) SetupSession(sc SessionContext, opts *types.SessionOpts) 
 	slog.Info("worktree hook: redirected session to isolated worktree",
 		"repo", repo, "worktree", wt, "branch", sc.ConversationID)
 
+	if sc.Notify != nil {
+		sc.Notify(fmt.Sprintf("This repo is already in use — working in an isolated worktree: %s", wt))
+	}
+
 	cleanup := func() {
 		if err := gitWorktreeRemove(repo, wt); err != nil {
 			slog.Warn("worktree hook: remove failed", "worktree", wt, "err", err)

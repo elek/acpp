@@ -2,11 +2,13 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
@@ -78,4 +80,50 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	// Closing the first session (which never got a worktree) is clean.
 	rt.CloseConversation(m1)
 	require.Equal(t, 0, rt.runningSessionsForDir(repo))
+}
+
+// TestWorktreeHookAnnouncesWorktree verifies that when the worktree hook
+// redirects a contended session into an isolated worktree, the router emits a
+// first harness message naming the worktree directory, and that an uncontended
+// (first) session produces no such notice.
+func TestWorktreeHookAnnouncesWorktree(t *testing.T) {
+	repo := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".acpp.yaml"),
+		[]byte("hooks:\n  - type: worktree\n"), 0o644))
+
+	rt := New()
+	t.Cleanup(rt.Close)
+	ctx := context.Background()
+	const agent = `sh -c "cat >/dev/null"`
+
+	// Collect the text of every harness worktree notice, keyed by conversation.
+	var notices []string
+	rt.Subscribe(func(_ context.Context, _ *json.RawMessage, _ types.ConversationMeta, msg any) {
+		n, ok := msg.(acp.SessionNotification)
+		if !ok || n.Update.AgentMessageChunk == nil {
+			return
+		}
+		acpp, _ := n.Update.AgentMessageChunk.Meta["acpp"].(map[string]any)
+		if acpp["type"] != "notice" {
+			return
+		}
+		if txt := n.Update.AgentMessageChunk.Content.Text; txt != nil {
+			notices = append(notices, txt.Text)
+		}
+	})
+
+	// First session: no contention, no worktree, no notice.
+	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	require.NoError(t, err)
+	require.Empty(t, notices, "first session must not announce a worktree")
+
+	// Second session: contention -> worktree -> a notice naming the worktree dir.
+	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	require.NoError(t, err)
+	wt := filepath.Join(repo, ".worktree", m2.ConversationID)
+	require.Len(t, notices, 1, "contended session must announce its worktree once")
+	require.Contains(t, notices[0], wt, "notice must name the worktree directory")
+
+	rt.CloseConversation(m2)
+	rt.CloseConversation(m1)
 }
