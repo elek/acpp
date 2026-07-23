@@ -16,7 +16,7 @@ func TestNoneSandbox(t *testing.T) {
 }
 
 func TestResolveSandboxNone(t *testing.T) {
-	sb, err := ResolveSandbox("none", "", "/tmp", nil)
+	sb, err := ResolveSandbox("none", "", "/tmp", nil, nil)
 	require.NoError(t, err)
 	cmd, args := sb.Wrap("echo", []string{"hello"})
 	require.Equal(t, "echo", cmd)
@@ -33,7 +33,7 @@ sandbox:
 `), 0o644)
 	require.NoError(t, err)
 
-	sb, err := ResolveSandbox("", "", "/tmp", nil, configPath)
+	sb, err := ResolveSandbox("", "", "/tmp", nil, nil, configPath)
 	require.NoError(t, err)
 	cmd, _ := sb.Wrap("echo", []string{"hello"})
 	// Empty sandbox type should default to bbwrap, not none
@@ -41,7 +41,7 @@ sandbox:
 }
 
 func TestResolveSandboxUnknown(t *testing.T) {
-	_, err := ResolveSandbox("unknown", "", "/tmp", nil)
+	_, err := ResolveSandbox("unknown", "", "/tmp", nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown sandbox type")
 }
@@ -57,7 +57,7 @@ sandbox:
 	require.NoError(t, err)
 
 	sb, err := ResolveSandbox("bbwrap", "", "/tmp",
-		[]string{"/srv/resources:/resources", "/srv/out/abc"}, configPath)
+		[]string{"/srv/resources:/resources", "/srv/out/abc"}, nil, configPath)
 	require.NoError(t, err)
 
 	_, args := sb.Wrap("agent", nil)
@@ -74,6 +74,40 @@ sandbox:
 func hasROBind(args []string, src, dest string) bool {
 	for i := 0; i+2 < len(args); i++ {
 		if args[i] == "--ro-bind" && args[i+1] == src && args[i+2] == dest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestResolveSandboxRWBinds(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(`
+sandbox:
+  ro-bind:
+    - /bin
+`), 0o644)
+	require.NoError(t, err)
+
+	sb, err := ResolveSandbox("bbwrap", "", "/tmp",
+		nil, []string{"/srv/repo:/repo", "/srv/work"}, configPath)
+	require.NoError(t, err)
+
+	_, args := sb.Wrap("agent", nil)
+
+	// The remapped read-write bind appears as "--bind /srv/repo /repo".
+	require.True(t, hasBind(args, "/srv/repo", "/repo"),
+		"expected remapped bind in %v", args)
+	// The same-path read-write bind appears as "--bind /srv/work /srv/work".
+	require.True(t, hasBind(args, "/srv/work", "/srv/work"),
+		"expected same-path bind in %v", args)
+}
+
+// hasBind reports whether args contains the sequence --bind src dest.
+func hasBind(args []string, src, dest string) bool {
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == "--bind" && args[i+1] == src && args[i+2] == dest {
 			return true
 		}
 	}

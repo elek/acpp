@@ -43,6 +43,33 @@ type Hook interface {
 	Incoming(hc HookContext, msg any) any
 }
 
+// SessionContext is the context passed to a SessionHook's SetupSession. Unlike
+// HookContext (per-message), it describes a conversation being created: its
+// freshly-minted ConversationID, the directory originally requested for it
+// (BaseDir, before any hook rewrites opts.CWD), and a way to ask how many other
+// live sessions already target a directory.
+type SessionContext struct {
+	Meta           types.ConversationMeta
+	ConversationID string
+	// BaseDir is the working directory requested for this session before any
+	// SessionHook rewrites it (equal to opts.CWD on entry).
+	BaseDir string
+	// RunningSessionsForDir reports how many sessions are currently live with the
+	// given base directory, letting a hook decide whether a directory is under
+	// contention. The session being created is not yet counted.
+	RunningSessionsForDir func(dir string) int
+}
+
+// SessionHook is an OPTIONAL interface a Hook may also implement to participate
+// in session setup and teardown. The router type-asserts for it. SetupSession
+// runs inside Router.Create after the conversation id is minted but BEFORE the
+// sandbox is resolved and the subprocess starts, so it may mutate opts.CWD and
+// append to opts.RWBinds. The returned cleanup func (may be nil) runs exactly
+// once when the session's process closes. A non-nil error aborts creation.
+type SessionHook interface {
+	SetupSession(sc SessionContext, opts *types.SessionOpts) (cleanup func(), err error)
+}
+
 // HookFactory builds a Hook from its .acpp.yaml params (per the spec: a
 // map[string]string maps to an interface implementation).
 type HookFactory func(params map[string]string) (Hook, error)

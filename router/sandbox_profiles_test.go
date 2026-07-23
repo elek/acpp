@@ -19,9 +19,10 @@ func wrapArgs(t *testing.T, opts *types.SessionOpts) string {
 	t.Helper()
 	r := New()
 	t.Cleanup(r.Close)
-	_, err := r.resolveProject(opts)
+	_, sbType, profiles, err := r.resolveProject(opts)
 	require.NoError(t, err)
-	require.NotNil(t, opts.Sandbox, "resolveProject should have built a sandbox")
+	require.NoError(t, r.resolveSandbox(opts, sbType, profiles))
+	require.NotNil(t, opts.Sandbox, "resolveSandbox should have built a sandbox")
 	name, args := opts.Sandbox.Wrap("sh", []string{"-c", "true"})
 	return name + " " + strings.Join(args, " ")
 }

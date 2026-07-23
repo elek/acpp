@@ -176,7 +176,7 @@ func TestResolveProject_CallerAgentUsedWithoutProjectFile(t *testing.T) {
 	rt := New(WithConfig(&config.Config{Defaults: config.Defaults{Agent: "default-agent"}}))
 	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "caller-agent"}
 
-	hooks, err := rt.resolveProject(&opts)
+	hooks, _, _, err := rt.resolveProject(&opts)
 	require.NoError(t, err)
 	require.Empty(t, hooks)
 	require.Equal(t, "caller-agent", opts.Agent)
@@ -188,7 +188,7 @@ func TestResolveProject_ProjectAgentOverridesCaller(t *testing.T) {
 
 	rt := New()
 	opts := types.SessionOpts{CWD: dir, Agent: "caller-agent"}
-	_, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(&opts)
 	require.NoError(t, err)
 	require.Equal(t, "project-agent", opts.Agent)
 }
@@ -197,7 +197,7 @@ func TestResolveProject_FallsBackToConfigDefaultAgent(t *testing.T) {
 	rt := New(WithConfig(&config.Config{Defaults: config.Defaults{Agent: "default-agent"}}))
 	opts := types.SessionOpts{CWD: t.TempDir()}
 
-	_, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(&opts)
 	require.NoError(t, err)
 	require.Equal(t, "default-agent", opts.Agent)
 }
@@ -208,7 +208,7 @@ func TestResolveProject_BuildsHooksFromProjectFile(t *testing.T) {
 
 	rt := New()
 	opts := types.SessionOpts{CWD: dir, Agent: "x"}
-	hooks, err := rt.resolveProject(&opts)
+	hooks, _, _, err := rt.resolveProject(&opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
 }
@@ -219,6 +219,6 @@ func TestResolveProject_UnknownHookTypeErrors(t *testing.T) {
 
 	rt := New()
 	opts := types.SessionOpts{CWD: dir, Agent: "x"}
-	_, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(&opts)
 	require.Error(t, err)
 }

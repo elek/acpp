@@ -36,6 +36,11 @@ type SessionOpts struct {
 	// a caller (e.g. arena) expose extra host directories read-only for a single
 	// session without editing sandbox profiles.
 	ROBinds []string
+	// RWBinds are the read-write equivalent of ROBinds (emitted as --bind). Only
+	// honored when Sandbox is left nil so Router.Create resolves it. The worktree
+	// hook uses this to expose the original repo read-write when it redirects a
+	// session's CWD to an isolated git worktree.
+	RWBinds []string
 }
 
 // SessionEvent pairs a session update with the session ID that produced it.

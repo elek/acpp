@@ -45,8 +45,10 @@ func NewNoneSandbox() Sandbox {
 // roBinds are caller-supplied read-only bind entries ("src" or "src:dest",
 // following parseBindEntry semantics) injected on top of the resolved
 // fragments. They are ignored when sandboxType is "none".
+// rwBinds are the read-write equivalent of roBinds (emitted as --bind), layered
+// on top of roBinds; also ignored when sandboxType is "none".
 // configPaths are optional additional config files; if empty, DefaultBwrapConfigPaths is used.
-func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds []string, configPaths ...string) (Sandbox, error) {
+func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rwBinds []string, configPaths ...string) (Sandbox, error) {
 	if sandboxType == "none" {
 		return NewNoneSandbox(), nil
 	}
@@ -88,6 +90,13 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds []s
 	if len(roBinds) > 0 {
 		const syntheticName = "__robinds__"
 		fragments[syntheticName] = &BwrapConfig{ROBind: roBinds}
+		profileList = append(profileList, syntheticName)
+	}
+
+	// Read-write binds are the same, layered after the ro-binds.
+	if len(rwBinds) > 0 {
+		const syntheticName = "__rwbinds__"
+		fragments[syntheticName] = &BwrapConfig{Bind: rwBinds}
 		profileList = append(profileList, syntheticName)
 	}
 

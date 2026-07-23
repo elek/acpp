@@ -107,6 +107,22 @@ type SessionState struct {
 	// hook state (e.g. commit's hasCommitted) is independent. Immutable after
 	// Create, so safe to read without the lock.
 	hooks []hook.Hook
+	// baseDir is the working directory originally requested for this session,
+	// captured before any session hook rewrote opts.CWD. It is what
+	// runningSessionsForDir counts against, so a worktree'd session still counts
+	// toward its origin repo's contention. Immutable after Create.
+	baseDir string
+	// cleanups are session-hook teardown funcs, run exactly once (guarded by
+	// cleanupOnce) when the conversation is finalized. Immutable after Create.
+	cleanups    []func()
+	cleanupOnce sync.Once
+}
+
+// runCleanups runs this session's hook teardown funcs exactly once, in reverse
+// order. Safe to call from any finalize path (deliberate close, subprocess-exit
+// watcher, or a failed Create).
+func (s *SessionState) runCleanups() {
+	s.cleanupOnce.Do(func() { runCleanups(s.cleanups) })
 }
 
 // OnShutdown registers the cancel function the /exit command invokes to shut the
@@ -133,8 +149,46 @@ func (r *Router) Subscribe(s Subscriber) {
 // need it can block via WaitReady). The subprocess is bound to the router's
 // lifetime (not ctx).
 func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.ConversationMeta, error) {
-	hooks, err := r.resolveProject(&opts)
+	hooks, sbType, profiles, err := r.resolveProject(&opts)
 	if err != nil {
+		return types.ConversationMeta{}, err
+	}
+
+	// The conversation id is minted before the session hooks run so a hook can
+	// name per-conversation resources after it (the worktree hook names the
+	// worktree branch/dir by convID).
+	convID := uuid.NewString()
+	baseDir := opts.CWD
+
+	// Session hooks run before the sandbox is resolved and the subprocess starts,
+	// so a hook may redirect opts.CWD and add opts.RWBinds. Each returns a cleanup
+	// func run when the conversation is finalized. On error, unwind the cleanups
+	// already collected and abort before starting anything.
+	var cleanups []func()
+	sc := hook.SessionContext{
+		Meta:                  types.ConversationMeta{ProjectID: opts.ProjectID, ConversationID: convID},
+		ConversationID:        convID,
+		BaseDir:               baseDir,
+		RunningSessionsForDir: r.runningSessionsForDir,
+	}
+	for _, h := range hooks {
+		sh, ok := h.(hook.SessionHook)
+		if !ok {
+			continue
+		}
+		cleanup, err := sh.SetupSession(sc, &opts)
+		if err != nil {
+			runCleanups(cleanups)
+			return types.ConversationMeta{}, err
+		}
+		if cleanup != nil {
+			cleanups = append(cleanups, cleanup)
+		}
+	}
+
+	// Build the sandbox now that opts.CWD / opts.RWBinds reflect any redirection.
+	if err := r.resolveSandbox(&opts, sbType, profiles); err != nil {
+		runCleanups(cleanups)
 		return types.ConversationMeta{}, err
 	}
 
@@ -145,21 +199,23 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		Sandbox: opts.Sandbox,
 	})
 	if err != nil {
+		runCleanups(cleanups)
 		return types.ConversationMeta{}, err
 	}
 
-	convID := uuid.NewString()
 	meta := types.ConversationMeta{
 		ProjectID:      opts.ProjectID,
 		ProcessPID:     ps.PID(),
 		ConversationID: convID,
 	}
 	state := &SessionState{
-		meta:  meta,
-		proc:  ps,
-		opts:  opts,
-		ready: make(chan struct{}),
-		hooks: hooks,
+		meta:     meta,
+		proc:     ps,
+		opts:     opts,
+		ready:    make(chan struct{}),
+		hooks:    hooks,
+		baseDir:  baseDir,
+		cleanups: cleanups,
 	}
 
 	r.mu.Lock()
@@ -199,6 +255,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		delete(r.sessions, convID)
 		r.mu.Unlock()
 		ps.Close()
+		state.runCleanups()
 		return types.ConversationMeta{}, err
 	}
 
@@ -246,13 +303,17 @@ func (r *Router) CreateError(ctx context.Context, opts types.SessionOpts, errMsg
 
 // resolveProject loads the conversation's .acpp.yaml (from opts.CWD) and folds it
 // over opts: the project file's agent and sandbox win over the caller's, which in
-// turn win over the global config defaults. It also instantiates the project's
-// hooks. Centralizing this here means .acpp.yaml is honored by every channel that
-// creates a conversation, not just one. A missing file is not an error.
-func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
+// turn win over the global config defaults. It resolves opts.Agent and returns
+// the project's hooks plus the resolved sandbox type/profiles. The sandbox itself
+// is NOT built here — Router.Create builds it via resolveSandbox after the
+// session hooks have run, so a hook that rewrites opts.CWD (e.g. the worktree
+// hook) is reflected in the bind mounts. Centralizing this here means .acpp.yaml
+// is honored by every channel that creates a conversation. A missing file is not
+// an error.
+func (r *Router) resolveProject(opts *types.SessionOpts) (hooks []hook.Hook, sbType, profiles string, err error) {
 	pc, err := config.LoadProject(opts.CWD)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 
 	// Agent: project file > caller > config default, then resolved against AgentPath.
@@ -265,34 +326,67 @@ func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
 	}
 	opts.Agent = r.cfg.ResolveAgent(agent)
 
-	// Sandbox: only resolve when the caller has not already built one. Project
-	// file > caller's type/profiles > config default. Channels pass the sandbox
-	// as strings (SandboxType/SandboxProfiles) and leave Sandbox nil so this is
-	// the single place .acpp.yaml is folded in — a caller that pre-builds Sandbox
-	// opts out and the project's profiles are silently dropped.
-	if opts.Sandbox == nil {
-		sbType, profiles := opts.SandboxType, opts.SandboxProfiles
-		if pc.Sandbox.Name != "" {
-			sbType, profiles = pc.Sandbox.Name, pc.Sandbox.Profiles
-		} else if sbType == "" {
-			sbType = r.cfg.Defaults.Sandbox
-		}
-		if sbType != "" {
-			sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD, opts.ROBinds)
-			if err != nil {
-				return nil, fmt.Errorf("router: resolving sandbox %q: %w", sbType, err)
-			}
-			opts.Sandbox = sb
-			opts.SandboxType = sbType
-			opts.SandboxProfiles = profiles
-		}
+	// Sandbox settings: project file > caller's type/profiles > config default.
+	// Only meaningful when the caller has not pre-built a Sandbox (resolveSandbox
+	// honors that). Channels pass the sandbox as strings and leave Sandbox nil so
+	// this is the single place .acpp.yaml is folded in.
+	sbType, profiles = opts.SandboxType, opts.SandboxProfiles
+	if pc.Sandbox.Name != "" {
+		sbType, profiles = pc.Sandbox.Name, pc.Sandbox.Profiles
+	} else if sbType == "" {
+		sbType = r.cfg.Defaults.Sandbox
 	}
 
-	hooks, err := hook.Build(pc.Hooks)
+	hooks, err = hook.Build(pc.Hooks)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
-	return hooks, nil
+	return hooks, sbType, profiles, nil
+}
+
+// resolveSandbox builds opts.Sandbox from the resolved sandbox type/profiles,
+// unless the caller already supplied a Sandbox. It is called from Create AFTER
+// the session hooks have run, so opts.CWD / opts.ROBinds / opts.RWBinds reflect
+// any redirection. A pre-built Sandbox opts out (its profiles are the caller's).
+func (r *Router) resolveSandbox(opts *types.SessionOpts, sbType, profiles string) error {
+	if opts.Sandbox != nil || sbType == "" {
+		return nil
+	}
+	sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD, opts.ROBinds, opts.RWBinds)
+	if err != nil {
+		return fmt.Errorf("router: resolving sandbox %q: %w", sbType, err)
+	}
+	opts.Sandbox = sb
+	opts.SandboxType = sbType
+	opts.SandboxProfiles = profiles
+	return nil
+}
+
+// runningSessionsForDir reports how many live conversations were created with the
+// given base directory (the directory originally requested, before any session
+// hook rewrote opts.CWD). A conversation is removed from the map on close, so map
+// membership is the liveness signal. Used by the worktree hook to detect a repo
+// that already has a running session.
+func (r *Router) runningSessionsForDir(dir string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	n := 0
+	for _, s := range r.sessions {
+		if s.baseDir == dir {
+			n++
+		}
+	}
+	return n
+}
+
+// runCleanups invokes cleanup funcs in reverse of the order they were collected,
+// skipping nils. Used for session-hook teardown.
+func runCleanups(cleanups []func()) {
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		if cleanups[i] != nil {
+			cleanups[i]()
+		}
+	}
 }
 
 // onMessage receives every inbound ACP message for a conversation. It drives the
@@ -604,6 +698,9 @@ func (r *Router) closeConversation(id types.ConversationMeta, errMsg string) {
 	if state.proc != nil {
 		state.proc.Close()
 	}
+	// Session-hook teardown runs after the agent process is gone so nothing in the
+	// worktree is still held open when it is removed.
+	state.runCleanups()
 }
 
 // watchProcess finalizes a conversation whose agent subprocess exits before the
