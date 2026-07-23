@@ -140,6 +140,7 @@ func New(store db.SessionReader, addr string) *Server {
 	e.GET("/", func(c echo.Context) error { return c.Redirect(http.StatusFound, "/projects") })
 	e.GET("/sessions", s.listSessions)
 	e.GET("/projects", s.viewProjects)
+	e.POST("/projects", s.createProject)
 	e.POST("/projects/session", s.createProjectSession)
 	e.GET("/session/:id", s.viewSession)
 	e.GET("/session/:id/logs", s.viewSessionLogs)

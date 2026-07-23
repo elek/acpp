@@ -22,7 +22,9 @@
 
   /* Sidebar */
   .sidebar { width: 240px; min-width: 200px; background: #fff; border-right: 1px solid #e7e5e4; overflow-y: auto; flex-shrink: 0; height: 100%; }
-  .sidebar-header { padding: 0.875em 1em 0.5em; font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; }
+  .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 0.875em 1em 0.5em; font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; }
+  .new-project-btn { border: none; background: transparent; color: #a8a29e; font-size: 1.25em; line-height: 1; font-weight: 400; cursor: pointer; padding: 0 0.25em; border-radius: 4px; transition: background 0.15s, color 0.15s; }
+  .new-project-btn:hover { background: #f5f5f4; color: #1c1917; }
   .project-item { display: flex; align-items: center; padding: 0.375em 1em; font-size: 0.8125em; color: #44403c; cursor: pointer; transition: background 0.15s; text-decoration: none; gap: 0.375em; }
   .project-item:hover { background: #f5f5f4; text-decoration: none; color: #1c1917; }
   .project-item.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
@@ -121,6 +123,20 @@
   .qs-hint { padding: 8px 16px; border-top: 1px solid #e7e5e4; font-size: 0.6875em; color: #a8a29e; display: flex; gap: 12px; }
   .qs-hint kbd { background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: 3px; padding: 0 4px; font-family: inherit; font-size: 0.9em; }
 
+  .np-body { padding: 16px; }
+  .np-title { font-size: 1em; font-weight: 700; color: #1c1917; margin: 0 0 12px; }
+  .np-field { margin-bottom: 12px; }
+  .np-field label { display: block; font-size: 0.75em; font-weight: 600; color: #78716c; margin-bottom: 4px; }
+  .np-field input { width: 100%; border: 1px solid #e7e5e4; border-radius: 6px; padding: 8px 10px; font-size: 0.875em; font-family: inherit; color: #1c1917; outline: none; }
+  .np-field input:focus { border-color: #bfdbfe; }
+  .np-hint { font-size: 0.6875em; color: #a8a29e; margin-top: 4px; }
+  .np-error { color: #dc2626; font-size: 0.8125em; margin: 0 0 12px; display: none; }
+  .np-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .np-btn { border-radius: 6px; padding: 8px 14px; font-size: 0.8125em; font-weight: 600; font-family: inherit; cursor: pointer; border: 1px solid #e7e5e4; background: #fff; color: #44403c; }
+  .np-btn:hover { background: #f5f5f4; }
+  .np-btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .np-btn.primary:hover { background: #1d4ed8; }
+
 
   /* Meta view table */
   .meta-table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #e7e5e4; }
@@ -153,7 +169,10 @@
 </header>
 <div class="layout">
   <div class="sidebar">
-    <div class="sidebar-header">Projects</div>
+    <div class="sidebar-header">
+      <span>Projects</span>
+      {{if .ProjectsEnabled}}<button id="new-project-btn" class="new-project-btn" title="New project">+</button>{{end}}
+    </div>
     {{range .Projects}}
     <a href="/projects?project={{.Name}}" class="project-item{{if eq $.ActiveProject .Name}} active{{end}}">
       <span class="hash">#</span>{{.Name}}{{if .HasRunning}}<span class="running-dot" title="Running session"></span>{{end}}
@@ -268,6 +287,29 @@
       <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
       <span><kbd>Enter</kbd> select</span>
       <span><kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- New project overlay -->
+<div class="qs-overlay" id="np-overlay">
+  <div class="qs-box">
+    <div class="np-body">
+      <h2 class="np-title">New project</h2>
+      <p class="np-error" id="np-error"></p>
+      <div class="np-field">
+        <label for="np-name">Name</label>
+        <input type="text" id="np-name" autocomplete="off" placeholder="my-project">
+      </div>
+      <div class="np-field">
+        <label for="np-dir">Directory <span style="font-weight:400;text-transform:none">(optional)</span></label>
+        <input type="text" id="np-dir" autocomplete="off" placeholder="resolved from search paths if blank">
+        <div class="np-hint">Leave blank to resolve from the configured search paths by name.</div>
+      </div>
+      <div class="np-actions">
+        <button class="np-btn" id="np-cancel" type="button">Cancel</button>
+        <button class="np-btn primary" id="np-create" type="button">Create</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1137,6 +1179,68 @@
       qsClose();
     }
   });
+
+  // --- New project modal ---
+  var npBtn = document.getElementById('new-project-btn');
+  var npOverlay = document.getElementById('np-overlay');
+  var npName = document.getElementById('np-name');
+  var npDir = document.getElementById('np-dir');
+  var npError = document.getElementById('np-error');
+  var npCreate = document.getElementById('np-create');
+  var npCancel = document.getElementById('np-cancel');
+
+  function npOpen() {
+    if (!npOverlay) return;
+    npError.style.display = 'none';
+    npName.value = '';
+    npDir.value = '';
+    npOverlay.classList.add('open');
+    npName.focus();
+  }
+  function npClose() {
+    if (npOverlay) npOverlay.classList.remove('open');
+  }
+  function npShowError(msg) {
+    npError.textContent = msg;
+    npError.style.display = 'block';
+  }
+  function npSubmit() {
+    var name = npName.value.trim();
+    if (!name) { npShowError('Name is required'); npName.focus(); return; }
+    npCreate.disabled = true;
+    npCreate.textContent = 'Creating...';
+    fetch('/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, dir: npDir.value.trim() })
+    }).then(function(r) {
+      return r.json().then(function(data) { return { ok: r.ok, data: data }; });
+    }).then(function(res) {
+      if (!res.ok) {
+        npShowError(res.data.error || 'Could not create project');
+        return;
+      }
+      window.location.href = '/projects?project=' + encodeURIComponent(res.data.id || name);
+    }).catch(function() {
+      npShowError('Request failed');
+    }).finally(function() {
+      npCreate.disabled = false;
+      npCreate.textContent = 'Create';
+    });
+  }
+
+  if (npBtn) npBtn.addEventListener('click', npOpen);
+  if (npCancel) npCancel.addEventListener('click', npClose);
+  if (npCreate) npCreate.addEventListener('click', npSubmit);
+  if (npOverlay) {
+    npOverlay.addEventListener('click', function(e) {
+      if (e.target === npOverlay) npClose();
+    });
+    npOverlay.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); npSubmit(); }
+      if (e.key === 'Escape') { e.preventDefault(); npClose(); }
+    });
+  }
 })();
 </script>
 </body>

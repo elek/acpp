@@ -21,6 +21,14 @@ export class ProjectPage {
   readonly fileInput: Locator;
   readonly attachmentThumbs: Locator;
   readonly userImages: Locator;
+  readonly newProjectButton: Locator;
+  readonly newProjectModal: Locator;
+  readonly newProjectName: Locator;
+  readonly newProjectDir: Locator;
+  readonly newProjectCreate: Locator;
+  readonly newProjectError: Locator;
+  readonly sidebarProjects: Locator;
+  readonly projectTitle: Locator;
 
   constructor(private readonly page: Page) {
     this.promptInput = page.locator('#prompt-input');
@@ -44,11 +52,54 @@ export class ProjectPage {
     this.separators = page.locator('#conversation .prompt-separator');
     this.commandEchoes = page.locator('#conversation .msg-command .msg-content');
     this.commandResponses = page.locator('#conversation .msg-command-response .msg-content');
+    // New-project modal in the sidebar header.
+    this.newProjectButton = page.locator('#new-project-btn');
+    this.newProjectModal = page.locator('#np-overlay');
+    this.newProjectName = page.locator('#np-name');
+    this.newProjectDir = page.locator('#np-dir');
+    this.newProjectCreate = page.locator('#np-create');
+    this.newProjectError = page.locator('#np-error');
+    this.sidebarProjects = page.locator('.sidebar .project-item');
+    this.projectTitle = page.locator('.session-bar .project-title');
   }
 
   async goto(project: string): Promise<void> {
     await this.page.goto(`/projects?project=${encodeURIComponent(project)}`);
     await expect(this.promptInput).toBeVisible();
+  }
+
+  // gotoProjects opens the bare project list (no active project). The sidebar and
+  // its "+" new-project button are always present; the prompt bar is not.
+  async gotoProjects(): Promise<void> {
+    await this.page.goto('/projects');
+    await expect(this.newProjectButton).toBeVisible();
+  }
+
+  // createProject opens the new-project modal, fills the name (and optional dir),
+  // submits, and waits for the client to navigate to the new project's view.
+  async createProject(name: string, dir?: string): Promise<void> {
+    await this.newProjectButton.click();
+    await expect(this.newProjectModal).toHaveClass(/open/);
+    // Simulated keystrokes/fill do not reliably reach these inputs under headless
+    // Chromium; assign values directly (the submit handler reads .value).
+    await this.setInputValue(this.newProjectName, name);
+    if (dir !== undefined) {
+      await this.setInputValue(this.newProjectDir, dir);
+    }
+    await this.newProjectCreate.click();
+    await this.page.waitForURL(
+      (url) => url.searchParams.get('project') === name,
+      { timeout: 30_000 },
+    );
+  }
+
+  private async setInputValue(locator: Locator, value: string): Promise<void> {
+    await locator.evaluate((el, v) => {
+      const input = el as HTMLInputElement;
+      input.value = v;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+    await expect(locator).toHaveValue(value);
   }
 
   // send types a prompt and submits it to the active running session. It records

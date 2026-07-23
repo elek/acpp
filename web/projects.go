@@ -4,13 +4,67 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/db"
 
 	"github.com/labstack/echo/v4"
 )
+
+// createProject creates (or, idempotently, confirms) a project row so it shows
+// up in the sidebar and can host sessions. The directory is optional: when
+// blank it is resolved from search_path by name, mirroring session start.
+func (s *Server) createProject(c echo.Context) error {
+	if s.projects == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "project creation not available"})
+	}
+	var body struct {
+		Name string `json:"name"`
+		Dir  string `json:"dir"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	ctx := c.Request().Context()
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+
+	// Idempotent: an existing project is left untouched; the caller navigates to it.
+	existing, err := s.projects.ListProjects(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range existing {
+		if p.Name == name {
+			return c.JSON(http.StatusOK, map[string]interface{}{"id": name, "existed": true})
+		}
+	}
+
+	dir := strings.TrimSpace(body.Dir)
+	if dir != "" {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "directory does not exist"})
+		}
+	} else if resolved, ok := config.FindProjectDir(s.searchPaths, name); ok {
+		dir = resolved
+	}
+
+	if dir != "" {
+		if err := s.projects.SetProjectField(ctx, name, "dir", dir); err != nil {
+			return err
+		}
+	} else if _, err := s.projects.GetProject(ctx, name); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"id": name})
+}
 
 func (s *Server) viewProjects(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -57,6 +111,7 @@ func (s *Server) viewProjects(c echo.Context) error {
 		"ActiveSession":   nil,
 		"Sessions":        nil,
 		"CreatorEnabled":  s.creator != nil,
+		"ProjectsEnabled": s.projects != nil,
 		"Defaults":        s.defaults,
 	}
 
