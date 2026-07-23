@@ -91,6 +91,16 @@
   .prompt-bar button.prompt-cancel:hover { background: #fee2e2; }
   .prompt-bar button.prompt-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
   .prompt-bar-hint { font-size: 0.6875em; color: #a8a29e; margin-top: 0.25em; }
+  .prompt-attach { background: transparent; border: 1px solid #d6d3d1; color: #57534e; font-size: 1em; line-height: 1; padding: 0.5em 0.625em; align-self: flex-end; }
+  .prompt-attach:hover { background: #f5f5f4; }
+  .prompt-attachments { display: flex; flex-wrap: wrap; gap: 0.5em; margin-bottom: 0.5em; }
+  .prompt-attachments:empty { display: none; }
+  .prompt-attachment { position: relative; width: 64px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid #d6d3d1; }
+  .prompt-attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .prompt-attachment button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .prompt-attachment button:hover { background: rgba(0,0,0,0.85); }
+  .prompt-bar.dragover { outline: 2px dashed #3b82f6; outline-offset: -4px; }
+  .msg-user .msg-content img { max-width: 100%; border-radius: 6px; margin-top: 0.5em; }
 
   /* Quick search overlay */
   .qs-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 15vh; }
@@ -224,14 +234,17 @@
       </table>
       </div>
     </div>
-    <div class="prompt-bar">
+    <div class="prompt-bar" id="prompt-bar">
+      <div id="prompt-attachments" class="prompt-attachments"></div>
       <div class="prompt-bar-inner">
+        <button id="prompt-attach" class="prompt-attach" type="button" title="Attach image" aria-label="Attach image">📎</button>
+        <input type="file" id="prompt-file" accept="image/*" multiple hidden>
         <textarea id="prompt-input" placeholder="Send a prompt..." rows="1"></textarea>
         <button id="prompt-cancel" class="prompt-cancel" style="display:none">Cancel</button>
         <button id="prompt-new-session" class="prompt-send" style="display:none">New session</button>
         <button id="prompt-send" class="prompt-send">Send</button>
       </div>
-      <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline</div>
+      <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline · paste, drop, or 📎 to attach images</div>
     </div>
     {{else}}
     <div class="conversation-area">
@@ -471,7 +484,16 @@
         closeAllBlocks();
         var div = document.createElement('div');
         div.className = 'msg msg-user';
-        div.innerHTML = '<div class="msg-label">User \u{1F4AC}</div><div class="msg-content">' + renderText(p.prompt || '') + '</div>';
+        var promptHtml = renderText(p.prompt || '');
+        if (p.images && p.images.length) {
+          for (var pi = 0; pi < p.images.length; pi++) {
+            var im = p.images[pi];
+            if (!im || !im.data) continue;
+            var imime = escapeHtml(im.mimeType || 'image/png');
+            promptHtml += '<img src="data:' + imime + ';base64,' + im.data + '" alt="Pasted image">';
+          }
+        }
+        div.innerHTML = '<div class="msg-label">User \u{1F4AC}</div><div class="msg-content">' + promptHtml + '</div>';
         container.appendChild(div);
         break;
       case 'agent_message_chunk':
@@ -636,9 +658,75 @@
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     }
 
+    // Staged images, held in-memory until the prompt is sent. Each entry is
+    // { id, dataUrl } where dataUrl is a full "data:<mime>;base64,<data>" string.
+    var attachEls = {
+      strip: document.getElementById('prompt-attachments'),
+      attachBtn: document.getElementById('prompt-attach'),
+      fileInput: document.getElementById('prompt-file'),
+      bar: document.getElementById('prompt-bar')
+    };
+    var attachments = [];
+    var nextAttachmentId = 0;
+
+    function renderAttachments() {
+      if (!attachEls.strip) return;
+      attachEls.strip.innerHTML = '';
+      attachments.forEach(function(a) {
+        var cell = document.createElement('div');
+        cell.className = 'prompt-attachment';
+        var img = document.createElement('img');
+        img.src = a.dataUrl;
+        img.alt = 'Attached image';
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = '×';
+        rm.title = 'Remove';
+        rm.addEventListener('click', function() {
+          attachments = attachments.filter(function(x) { return x.id !== a.id; });
+          renderAttachments();
+        });
+        cell.appendChild(img);
+        cell.appendChild(rm);
+        attachEls.strip.appendChild(cell);
+      });
+    }
+
+    // addImage stages one image blob. Non-image or null blobs are ignored.
+    function addImage(blob) {
+      if (!blob || !blob.type || blob.type.indexOf('image/') !== 0) return;
+      var reader = new FileReader();
+      reader.onload = function() {
+        attachments.push({ id: nextAttachmentId++, dataUrl: reader.result });
+        renderAttachments();
+      };
+      reader.readAsDataURL(blob);
+    }
+
+    // splitDataUrl turns "data:<mime>;base64,<data>" into { data, mimeType } with
+    // raw base64 (no prefix), matching the backend / acp.ImageBlock.
+    function splitDataUrl(dataUrl) {
+      var comma = dataUrl.indexOf(',');
+      var meta = dataUrl.slice(5, comma);
+      var semi = meta.indexOf(';');
+      return {
+        mimeType: semi >= 0 ? meta.slice(0, semi) : meta,
+        data: dataUrl.slice(comma + 1)
+      };
+    }
+
+    function currentImages() {
+      return attachments.map(function(a) { return splitDataUrl(a.dataUrl); });
+    }
+    function clearAttachments() {
+      attachments = [];
+      renderAttachments();
+    }
+
     function sendPrompt() {
       var text = input.value.trim();
-      if (!text || sending) return;
+      if ((!text && attachments.length === 0) || sending) return;
+      var images = currentImages();
 
       // If we have a running session, send prompt to it
       if (sessionId && isSessionRunning) {
@@ -649,7 +737,7 @@
         fetch('/session/' + encodeURIComponent(sessionId) + '/prompt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text })
+          body: JSON.stringify({ prompt: text, images: images })
         }).then(function(r) {
           return r.json().then(function(j) {
             if (!r.ok) throw new Error(j.error || 'Failed');
@@ -657,6 +745,7 @@
           });
         }).then(function(data) {
           input.value = '';
+          clearAttachments();
           autoResize();
           if (data.status === 'command') {
             // Display command response in conversation
@@ -713,6 +802,7 @@
         input.disabled = true;
         btn.textContent = 'Creating...';
         var promptText = text;
+        var promptImages = images;
         fetch('/projects/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -767,13 +857,14 @@
           connectWebSocket();
 
           input.value = '';
+          clearAttachments();
           autoResize();
           btn.textContent = 'Send';
 
           return fetch('/session/' + encodeURIComponent(sessionId) + '/prompt', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: promptText })
+            body: JSON.stringify({ prompt: promptText, images: promptImages })
           });
         }).then(function(r) {
           if (r && !r.ok) return r.json().then(function(j) { throw new Error(j.error || 'Failed to send prompt'); });
@@ -911,6 +1002,37 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
     });
     input.addEventListener('input', autoResize);
+
+    // Paste: stage any image items from the clipboard. Plain-text paste falls
+    // through to the textarea untouched.
+    input.addEventListener('paste', function(e) {
+      var items = (e.clipboardData || {}).items || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.indexOf('image/') === 0) addImage(items[i].getAsFile());
+      }
+    });
+
+    // Attach button opens the hidden file picker; its selection stages images.
+    if (attachEls.attachBtn && attachEls.fileInput) {
+      attachEls.attachBtn.addEventListener('click', function() { attachEls.fileInput.click(); });
+      attachEls.fileInput.addEventListener('change', function() {
+        var files = attachEls.fileInput.files || [];
+        for (var i = 0; i < files.length; i++) addImage(files[i]);
+        attachEls.fileInput.value = '';
+      });
+    }
+
+    // Drag-and-drop image files onto the prompt bar.
+    if (attachEls.bar) {
+      attachEls.bar.addEventListener('dragover', function(e) { e.preventDefault(); attachEls.bar.classList.add('dragover'); });
+      attachEls.bar.addEventListener('dragleave', function(e) { if (e.target === attachEls.bar) attachEls.bar.classList.remove('dragover'); });
+      attachEls.bar.addEventListener('drop', function(e) {
+        e.preventDefault();
+        attachEls.bar.classList.remove('dragover');
+        var files = (e.dataTransfer || {}).files || [];
+        for (var i = 0; i < files.length; i++) addImage(files[i]);
+      });
+    }
   }
 
   // --- Quick search (Ctrl+K) ---

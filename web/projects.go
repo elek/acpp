@@ -139,9 +139,10 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// Send the first prompt if provided.
+	// Send the first prompt if provided. The new-session modal is text-only;
+	// image paste happens in the live prompt bar.
 	if body.Prompt != "" && s.webChannel != nil {
-		if err := s.webChannel.SubmitPrompt(sessionID, body.Prompt); err != nil {
+		if err := s.webChannel.SubmitPrompt(sessionID, body.Prompt, nil); err != nil {
 			slog.Error("web: submit initial prompt", "session", sessionID, "error", err)
 		}
 	}

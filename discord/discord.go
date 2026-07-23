@@ -3,7 +3,6 @@ package discord
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log"
@@ -323,16 +322,10 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 	return id, nil
 }
 
-// buildPrompt assembles ACP content blocks from message text and image attachments.
+// buildPrompt assembles ACP content blocks from message text and image
+// attachments, sharing one implementation with every other channel.
 func buildPrompt(content string, images []types.ImageData) []acp.ContentBlock {
-	var blocks []acp.ContentBlock
-	if strings.TrimSpace(content) != "" {
-		blocks = append(blocks, acp.TextBlock(content))
-	}
-	for _, img := range images {
-		blocks = append(blocks, acp.ImageBlock(base64.StdEncoding.EncodeToString(img.Data), img.MimeType))
-	}
-	return blocks
+	return types.BuildPrompt(content, images)
 }
 
 // handleReady logs when the bot connects and clears any stale global slash

@@ -87,11 +87,7 @@ func (p *Persister) Receive(ctx context.Context, rid *json.RawMessage, id types.
 		p.insertLog(cid, eventType, raw)
 		p.observeUpdate(cid, m.Update)
 	case acp.PromptRequest:
-		var text string
-		if len(m.Prompt) > 0 && m.Prompt[0].Text != nil {
-			text = m.Prompt[0].Text.Text
-		}
-		payload, _ := json.Marshal(map[string]string{"prompt": text})
+		payload, _ := json.Marshal(types.PromptEchoFromBlocks(m.Prompt))
 		p.insertLog(cid, "prompt", payload)
 		p.beginTurn(cid)
 	case acp.PromptResponse:

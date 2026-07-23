@@ -18,11 +18,17 @@ export class ProjectPage {
   readonly separators: Locator;
   readonly commandEchoes: Locator;
   readonly commandResponses: Locator;
+  readonly fileInput: Locator;
+  readonly attachmentThumbs: Locator;
+  readonly userImages: Locator;
 
   constructor(private readonly page: Page) {
     this.promptInput = page.locator('#prompt-input');
     this.sendButton = page.locator('#prompt-send');
     this.cancelButton = page.locator('#prompt-cancel');
+    this.fileInput = page.locator('#prompt-file');
+    this.attachmentThumbs = page.locator('#prompt-attachments .prompt-attachment');
+    this.userImages = page.locator('#conversation .msg-user .msg-content img');
     this.newSessionButton = page.locator('#prompt-new-session');
     // The always-visible "new" conversation button in the top session bar
     // (distinct from #prompt-new-session, which only appears once a session is
@@ -59,6 +65,14 @@ export class ProjectPage {
     }, text);
     await expect(this.promptInput).toHaveValue(text);
     await this.sendButton.click();
+  }
+
+  // attachImage stages an image via the hidden file input (the same code path as
+  // paste/drop) and waits for its thumbnail to render before returning.
+  async attachImage(name: string, mimeType: string, buffer: Buffer): Promise<void> {
+    const before = await this.attachmentThumbs.count();
+    await this.fileInput.setInputFiles({ name, mimeType, buffer });
+    await expect.poll(() => this.attachmentThumbs.count()).toBeGreaterThan(before);
   }
 
   private turnsBefore = 0;

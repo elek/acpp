@@ -351,20 +351,25 @@ func (s *Server) stopSession(c echo.Context) error {
 func (s *Server) sendPrompt(c echo.Context) error {
 	id := c.Param("id")
 	var body struct {
-		Prompt string `json:"prompt"`
+		Prompt string             `json:"prompt"`
+		Images []PromptImageInput `json:"images"`
 	}
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	if body.Prompt == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "prompt is required"})
+	if body.Prompt == "" && len(body.Images) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "prompt or an image is required"})
 	}
 	if s.webChannel == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "live sessions not available"})
 	}
+	images, err := DecodePromptImages(body.Images)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
 	// Leading-slash messages (e.g. /clear, /cancel) are recognised as commands
 	// by the router itself, so the prompt is forwarded verbatim.
-	if err := s.webChannel.SubmitPrompt(id, body.Prompt); err != nil {
+	if err := s.webChannel.SubmitPrompt(id, body.Prompt, images); err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusAccepted, map[string]string{"status": "accepted"})

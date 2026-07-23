@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"strings"
@@ -11,7 +12,32 @@ import (
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
+	"github.com/pkg/errors"
 )
+
+// PromptImageInput is a base64-encoded image in a prompt POST body. The data is
+// raw base64 (no "data:...;base64," prefix), matching acp.ImageBlock.
+type PromptImageInput struct {
+	Data     string `json:"data"`
+	MimeType string `json:"mimeType"`
+}
+
+// DecodePromptImages decodes base64 request images into raw-byte ImageData,
+// erroring on the first malformed entry.
+func DecodePromptImages(in []PromptImageInput) ([]types.ImageData, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]types.ImageData, 0, len(in))
+	for _, img := range in {
+		raw, err := base64.StdEncoding.DecodeString(img.Data)
+		if err != nil {
+			return nil, errors.Wrap(err, "decoding image data")
+		}
+		out = append(out, types.ImageData{Data: raw, MimeType: img.MimeType})
+	}
+	return out, nil
+}
 
 // WebChannel bridges the web UI to the router. It is a router.Subscriber: every
 // raw ACP update flowing through the router is translated into the JSON event
@@ -60,12 +86,8 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 		c.publish(id.ConversationID, eventType, raw)
 	case acp.PromptRequest:
 		// Echo the user's prompt so the browser renders it, mirroring how
-		// persisted history replays.
-		var text string
-		if len(m.Prompt) > 0 && m.Prompt[0].Text != nil {
-			text = m.Prompt[0].Text.Text
-		}
-		payload, _ := json.Marshal(map[string]string{"prompt": text})
+		// persisted history replays. Carries both text and any pasted images.
+		payload, _ := json.Marshal(types.PromptEchoFromBlocks(m.Prompt))
 		c.publish(id.ConversationID, "prompt", payload)
 	case acp.PromptResponse:
 		// The turn has finished; the frontend draws a separator on this event.
@@ -154,7 +176,7 @@ func (c *WebChannel) StartFailedSessionWeb(dir, projectName, errMsg string) stri
 // as a "command_response" event — both browser-only, never persisted. A normal
 // prompt is echoed as a "prompt" event (via the router fanning the raw
 // PromptRequest out to subscribers) so it renders immediately.
-func (c *WebChannel) SubmitPrompt(sessionID, prompt string) error {
+func (c *WebChannel) SubmitPrompt(sessionID, prompt string, images []types.ImageData) error {
 	c.mu.Lock()
 	conv, ok := c.byID[sessionID]
 	c.mu.Unlock()
@@ -189,7 +211,7 @@ func (c *WebChannel) SubmitPrompt(sessionID, prompt string) error {
 		}
 		if err := c.router.Send(ctx, meta, acp.PromptRequest{
 			SessionId: meta.SessionID,
-			Prompt:    []acp.ContentBlock{acp.TextBlock(prompt)},
+			Prompt:    types.BuildPrompt(prompt, images),
 		}); err != nil {
 			c.reportSubmitErr(sessionID, err)
 		}

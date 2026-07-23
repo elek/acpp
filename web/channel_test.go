@@ -80,6 +80,39 @@ func TestWebChannel_ReceivePublishesAgentMessage(t *testing.T) {
 	}
 }
 
+// TestWebChannel_PromptRequestEchoesTextAndImages verifies the "prompt" echo
+// event carries both the user's text and any pasted image blocks, so the
+// browser can render the user's turn (live and on replay).
+func TestWebChannel_PromptRequestEchoesTextAndImages(t *testing.T) {
+	hub := NewHub()
+	c := newTestChannel(hub)
+
+	sessionID := "sess-img"
+	sub := hub.Subscribe(sessionID)
+	defer hub.Unsubscribe(sessionID, sub)
+
+	id := types.ConversationMeta{ConversationID: sessionID, SessionID: acp.SessionId(sessionID)}
+	blocks := types.BuildPrompt("look at this", []types.ImageData{
+		{Data: []byte{0x89, 0x50, 0x4e, 0x47}, MimeType: "image/png"},
+	})
+	c.Receive(context.Background(), nil, id, acp.PromptRequest{SessionId: id.SessionID, Prompt: blocks})
+
+	entry := readEntry(t, sub)
+	if entry.EventType != "prompt" {
+		t.Fatalf("event_type = %q, want prompt", entry.EventType)
+	}
+	var echo types.PromptEcho
+	if err := json.Unmarshal(entry.Payload, &echo); err != nil {
+		t.Fatalf("unmarshal prompt payload: %v", err)
+	}
+	if echo.Prompt != "look at this" {
+		t.Errorf("prompt = %q, want %q", echo.Prompt, "look at this")
+	}
+	if len(echo.Images) != 1 || echo.Images[0].MimeType != "image/png" || echo.Images[0].Data == "" {
+		t.Errorf("images = %+v, want one png", echo.Images)
+	}
+}
+
 func TestWebChannel_PromptResponsePublishesFinished(t *testing.T) {
 	hub := NewHub()
 	c := newTestChannel(hub)
@@ -119,7 +152,7 @@ func TestWebChannel_SubmitCommandEchoesAndResponds(t *testing.T) {
 	sub := hub.Subscribe(sessionID)
 	defer hub.Unsubscribe(sessionID, sub)
 
-	if err := c.SubmitPrompt(sessionID, "/help"); err != nil {
+	if err := c.SubmitPrompt(sessionID, "/help", nil); err != nil {
 		t.Fatalf("SubmitPrompt: %v", err)
 	}
 
@@ -152,7 +185,7 @@ func TestWebChannel_SubmitPlainPromptIsNotEchoedAsCommand(t *testing.T) {
 	sub := hub.Subscribe(sessionID)
 	defer hub.Unsubscribe(sessionID, sub)
 
-	if err := c.SubmitPrompt(sessionID, "hello there"); err != nil {
+	if err := c.SubmitPrompt(sessionID, "hello there", nil); err != nil {
 		t.Fatalf("SubmitPrompt: %v", err)
 	}
 
