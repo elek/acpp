@@ -222,3 +222,44 @@ func TestResolveProject_UnknownHookTypeErrors(t *testing.T) {
 	_, _, _, err := rt.resolveProject(&opts)
 	require.Error(t, err)
 }
+
+// Global hooks from ~/.config/acpp/config.yaml apply to every conversation, even
+// a project with no .acpp.yaml of its own.
+func TestResolveProject_BuildsHooksFromGlobalConfig(t *testing.T) {
+	rt := New(WithConfig(&config.Config{
+		Hooks: []config.HookConfig{{Type: "worktree"}},
+	}))
+	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "x"}
+
+	hooks, _, _, err := rt.resolveProject(&opts)
+	require.NoError(t, err)
+	require.Len(t, hooks, 1)
+	require.IsType(t, &hook.WorktreeHook{}, hooks[0])
+}
+
+// Global and project hooks concatenate, global first then project.
+func TestResolveProject_GlobalAndProjectHooksConcatenate(t *testing.T) {
+	dir := t.TempDir()
+	writeProject(t, dir, "hooks:\n  - type: commit\n")
+
+	rt := New(WithConfig(&config.Config{
+		Hooks: []config.HookConfig{{Type: "worktree"}},
+	}))
+	opts := types.SessionOpts{CWD: dir, Agent: "x"}
+
+	hooks, _, _, err := rt.resolveProject(&opts)
+	require.NoError(t, err)
+	require.Len(t, hooks, 2)
+	require.IsType(t, &hook.WorktreeHook{}, hooks[0], "global hook must run first")
+	require.IsType(t, &hook.CommitHook{}, hooks[1], "project hook must run after")
+}
+
+// An unknown hook type in the global config fails loudly, same as a project one.
+func TestResolveProject_UnknownGlobalHookTypeErrors(t *testing.T) {
+	rt := New(WithConfig(&config.Config{
+		Hooks: []config.HookConfig{{Type: "does-not-exist"}},
+	}))
+	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "x"}
+	_, _, _, err := rt.resolveProject(&opts)
+	require.Error(t, err)
+}

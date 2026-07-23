@@ -67,6 +67,10 @@ type Config struct {
 	ScheduledJobs   []ScheduledJob  `yaml:"scheduled_jobs"`
 	OTLP            OTLPConfig      `yaml:"otlp"`
 	Desktop         DesktopConfig   `yaml:"desktop,omitempty"`
+	// Hooks are message-transform / session hooks applied to every conversation,
+	// in every project. They run BEFORE a project's own .acpp.yaml hooks (see
+	// Router.resolveProject). Same shape as ProjectConfig.Hooks.
+	Hooks []HookConfig `yaml:"hooks,omitempty"`
 }
 
 type ToolPermissions struct {

@@ -337,7 +337,9 @@ func (r *Router) resolveProject(opts *types.SessionOpts) (hooks []hook.Hook, sbT
 		sbType = r.cfg.Defaults.Sandbox
 	}
 
-	hooks, err = hook.Build(pc.Hooks)
+	// Hooks: global config hooks run first, then the project's own. Building both
+	// in one call means an unknown type in either source fails loudly here.
+	hooks, err = hook.Build(append(append([]config.HookConfig{}, r.cfg.Hooks...), pc.Hooks...))
 	if err != nil {
 		return nil, "", "", err
 	}
