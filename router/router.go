@@ -278,7 +278,7 @@ func (r *Router) resolveProject(opts *types.SessionOpts) ([]hook.Hook, error) {
 			sbType = r.cfg.Defaults.Sandbox
 		}
 		if sbType != "" {
-			sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD)
+			sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD, opts.ROBinds)
 			if err != nil {
 				return nil, fmt.Errorf("router: resolving sandbox %q: %w", sbType, err)
 			}

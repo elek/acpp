@@ -40,7 +40,7 @@ func (s *Sandbox) Run(kctx *kong.Context) error {
 
 	sbType, profiles := resolveSandboxSettings(s.SandboxType, s.Profiles, pc, cfg.Defaults.Sandbox)
 
-	sb, err := sandbox.ResolveSandbox(sbType, profiles, cwd)
+	sb, err := sandbox.ResolveSandbox(sbType, profiles, cwd, nil)
 	if err != nil {
 		return fmt.Errorf("resolving sandbox %q: %w", sbType, err)
 	}

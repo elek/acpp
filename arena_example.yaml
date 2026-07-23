@@ -1,0 +1,69 @@
+# Example arena plan.
+#
+# Run it with:
+#   acpp arena arena_example.yaml -o ./arena-runs
+#
+# It fetches the resources once, runs every agent on the same prompt in its own
+# isolated copy of those resources, then has each agent blindly score all the
+# results. The run is idempotent: re-running reuses completed work on disk and
+# only fills the gaps, then regenerates the report.
+#
+# Output lands in <output-dir>/<name>/ (here ./arena-runs/refactor-bench/):
+#   resources/            the fetched inputs (shared, fetched once)
+#   meta.yaml             the name <-> blind-id map (evaluators never see it)
+#   run/<id>/             each agent's working copy of the resources
+#   output/<id>/          archived result: response.md + artifacts
+#   eval/<id>/scores.json each evaluator's blind scores
+#   report.md             totals + evaluator x contestant pivot table
+
+# Output directory name (created under --output-dir, default the current dir).
+name: refactor-bench
+
+# Inputs fetched with hashicorp/go-getter into resources/, once.
+# Each entry is either a scalar source string (placed at the resources root)
+# or a { src, dest } mapping (dest is relative to the resources dir).
+# go-getter understands local paths, git/github, http(s), archives, etc.
+resources:
+  # A local directory, copied into resources/ (relative paths resolve against
+  # this plan file's location).
+  - ./testdata/sample-project
+  # A remote git subdirectory placed under resources/docs.
+  # - src: github.com/org/repo//docs
+  #   dest: docs
+
+# The task, sent verbatim to every contestant. Tell the agents to leave their
+# work product as one of the files listed under `artifacts` below.
+prompt: |
+  Review the code in this directory. Improve its readability and fix any bugs
+  you find, editing files in place. When you are done, write a short summary of
+  the changes you made to review.json in the current directory.
+
+# Contestants. `name` is the label shown in the report (must be unique); `agent`
+# is the command string (same resolution as `acpp run`). The same underlying
+# agent may appear under several names (e.g. different models or flags).
+agents:
+  - { name: claude, agent: claude-code-acp }
+  - { name: opencode, agent: opencode }
+  # Run the same CLI twice under different labels if you like:
+  # - { name: claude-again, agent: claude-code-acp }
+
+# Files to archive from each run dir into its output dir, after the turn ends.
+# Standard filepath.Glob patterns (no `**`). Point these at the work product the
+# prompt asks for; matches are copied verbatim.
+artifacts:
+  - review.json
+
+# Scoring round configuration (all optional).
+evaluation:
+  # The evaluator sandbox type. Defaults to "bbwrap", which is required for the
+  # blind read-only bind-mounts of /resources and /outputs/<id>. Use "none" only
+  # if you cannot run bubblewrap (then outputs are not isolated read-only).
+  sandbox: bbwrap
+  # Extra sandbox profiles for the evaluator (comma-separated), if needed.
+  profiles: ""
+  # Custom evaluation prompt. Leave unset to use the built-in prompt, which tells
+  # the evaluator to read /resources, compare every candidate under /outputs, and
+  # write scores.json ([{ "id", "score" (1-10), "rationale" }]) to its cwd.
+  # prompt: |
+  #   You are judging solutions under /outputs against the task in /resources.
+  #   Score each 1-10 on correctness and quality and write scores.json.

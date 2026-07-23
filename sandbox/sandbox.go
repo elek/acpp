@@ -42,8 +42,11 @@ func NewNoneSandbox() Sandbox {
 // sandboxType is the type ("bbwrap", "bwrap", "sandbox", or "none"; empty defaults to bbwrap).
 // profiles is a comma-separated list of additional profiles.
 // cwd is the working directory.
+// roBinds are caller-supplied read-only bind entries ("src" or "src:dest",
+// following parseBindEntry semantics) injected on top of the resolved
+// fragments. They are ignored when sandboxType is "none".
 // configPaths are optional additional config files; if empty, DefaultBwrapConfigPaths is used.
-func ResolveSandbox(sandboxType string, profiles string, cwd string, configPaths ...string) (Sandbox, error) {
+func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds []string, configPaths ...string) (Sandbox, error) {
 	if sandboxType == "none" {
 		return NewNoneSandbox(), nil
 	}
@@ -78,6 +81,14 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, configPaths
 				profileList = append(profileList, p)
 			}
 		}
+	}
+
+	// Inject caller-supplied read-only binds as a synthetic profile so they are
+	// merged on top of the resolved base fragment (appended after its binds).
+	if len(roBinds) > 0 {
+		const syntheticName = "__robinds__"
+		fragments[syntheticName] = &BwrapConfig{ROBind: roBinds}
+		profileList = append(profileList, syntheticName)
 	}
 
 	return NewBwrapSandbox("sandbox", profileList, cwd, fragments)

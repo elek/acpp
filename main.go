@@ -13,6 +13,7 @@ type CLI struct {
 	Sandbox cli2.Sandbox `cmd:"" help:"Start an interactive command (bash by default) inside a sandbox"`
 	Read    cli2.Read    `cmd:"" help:"Read a text file (used by sandbox delegation)"`
 	Tck     cli2.Tck     `cmd:"" help:"Test ACP agent binaries and report a compatibility matrix"`
+	Arena   cli2.Arena   `cmd:"" help:"Run several ACP agents on one task in isolated dirs and score the results"`
 }
 
 func main() {

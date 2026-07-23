@@ -1,0 +1,22 @@
+# Smoke arena plan used by integration/arena_test.go.
+#
+# The test runs this under a sandbox (bbwrap), so it doubles as proof that the
+# arena execution and evaluation rounds work inside a sandbox.
+#
+# It uses the `rai acp fake` agent so the run is hermetic (no credentials or
+# network). To run against real agents locally, swap the agent commands, e.g.:
+#   - { name: claude-code, agent: claude-code-acp }
+#   - { name: kimi, agent: rai do --model together/moonshotai/Kimi-K2.7-Code base }
+# and make sure your sandbox profile binds those tools (see the test's bbwrap.yaml).
+name: smoketest
+
+prompt: What is the capital of Hungary?
+
+agents:
+  - { name: claude-code, agent: claude-code-acp }
+  - { name: kimi, agent: rai acp --model together/moonshotai/Kimi-K2.7-Code base }
+
+evaluation:
+  # bbwrap is required for the blind read-only bind-mounts of /resources and
+  # /outputs/<id>. The test provides a clean, self-contained sandbox profile.
+  sandbox: bbwrap

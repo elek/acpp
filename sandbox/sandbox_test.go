@@ -16,7 +16,7 @@ func TestNoneSandbox(t *testing.T) {
 }
 
 func TestResolveSandboxNone(t *testing.T) {
-	sb, err := ResolveSandbox("none", "", "/tmp")
+	sb, err := ResolveSandbox("none", "", "/tmp", nil)
 	require.NoError(t, err)
 	cmd, args := sb.Wrap("echo", []string{"hello"})
 	require.Equal(t, "echo", cmd)
@@ -33,7 +33,7 @@ sandbox:
 `), 0o644)
 	require.NoError(t, err)
 
-	sb, err := ResolveSandbox("", "", "/tmp", configPath)
+	sb, err := ResolveSandbox("", "", "/tmp", nil, configPath)
 	require.NoError(t, err)
 	cmd, _ := sb.Wrap("echo", []string{"hello"})
 	// Empty sandbox type should default to bbwrap, not none
@@ -41,9 +41,43 @@ sandbox:
 }
 
 func TestResolveSandboxUnknown(t *testing.T) {
-	_, err := ResolveSandbox("unknown", "", "/tmp")
+	_, err := ResolveSandbox("unknown", "", "/tmp", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown sandbox type")
+}
+
+func TestResolveSandboxROBinds(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(`
+sandbox:
+  ro-bind:
+    - /bin
+`), 0o644)
+	require.NoError(t, err)
+
+	sb, err := ResolveSandbox("bbwrap", "", "/tmp",
+		[]string{"/srv/resources:/resources", "/srv/out/abc"}, configPath)
+	require.NoError(t, err)
+
+	_, args := sb.Wrap("agent", nil)
+
+	// The remapped read-only bind appears as "--ro-bind /srv/resources /resources".
+	require.True(t, hasROBind(args, "/srv/resources", "/resources"),
+		"expected remapped ro-bind in %v", args)
+	// The same-path read-only bind appears as "--ro-bind /srv/out/abc /srv/out/abc".
+	require.True(t, hasROBind(args, "/srv/out/abc", "/srv/out/abc"),
+		"expected same-path ro-bind in %v", args)
+}
+
+// hasROBind reports whether args contains the sequence --ro-bind src dest.
+func hasROBind(args []string, src, dest string) bool {
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == "--ro-bind" && args[i+1] == src && args[i+2] == dest {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoadBwrapConfig(t *testing.T) {

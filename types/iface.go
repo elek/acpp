@@ -30,6 +30,12 @@ type SessionOpts struct {
 	// leave Sandbox nil and set SandboxType/SandboxProfiles so the project file is
 	// honored; a pre-built Sandbox bypasses that resolution.
 	SandboxProfiles string
+	// ROBinds are additional read-only bind mounts for the sandbox, each entry
+	// "src" or "src:dest" (see sandbox.parseBindEntry). Like SandboxProfiles it is
+	// only honored when Sandbox is left nil so Router.Create resolves it; it lets
+	// a caller (e.g. arena) expose extra host directories read-only for a single
+	// session without editing sandbox profiles.
+	ROBinds []string
 }
 
 // SessionEvent pairs a session update with the session ID that produced it.
