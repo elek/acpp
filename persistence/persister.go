@@ -158,7 +158,10 @@ func (p *Persister) observeUpdate(sid string, update acp.SessionUpdate) {
 }
 
 // beginTurn marks the session running and records the turn's start time so its
-// duration can be measured when the prompt response arrives.
+// duration can be measured when the prompt response arrives. The running status
+// is flushed to the store immediately so a conversation actively processing its
+// turn is shown as running, not left at its pre-turn "pending" state until the
+// response lands.
 func (p *Persister) beginTurn(sid string) {
 	if sid == "" {
 		return
@@ -170,9 +173,15 @@ func (p *Persister) beginTurn(sid string) {
 		p.track[sid] = st
 	}
 	st.info.Status = types.StatusRunning
+	st.info.Model = st.lastModel
 	st.promptStart = p.now()
 	st.timing = true
+	info := st.info
 	p.mu.Unlock()
+
+	if err := p.store.UpdateSession(context.Background(), sid, info); err != nil {
+		slog.Error("persistence: update session", "session", sid, "error", err)
+	}
 }
 
 // endTurn finalizes one prompt turn: it folds in the authoritative usage from the

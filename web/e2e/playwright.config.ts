@@ -6,10 +6,17 @@ import { ensureFonts } from './harness/fonts';
 // process), so the browser each worker launches inherits FONTCONFIG_FILE.
 ensureFonts();
 
-// One Playwright project per agent (rai, claude-code-acp). global-setup starts a
-// server per *available* agent; a project whose server was not started skips via
-// the `server` fixture. Real agents are slow and non-deterministic, so timeouts
-// are generous and CI retries twice.
+// One Playwright project per agent (rai, claude-code-acp, hang). global-setup
+// starts a server per *available* agent; a project whose server was not started
+// skips via the `server` fixture. Real agents are slow and non-deterministic, so
+// timeouts are generous and CI retries twice.
+//
+// Specs are split by which agent they need: `*.stub.spec.ts` require the
+// deterministic stub agent and run only under stub projects (e.g. `hang`), while
+// every other spec runs only under real-agent projects. This keeps the stub
+// specs always-on (node is always present) without them ever hitting a real
+// agent that would not reproduce the stubbed condition.
+const STUB_SPECS = /\.stub\.spec\.ts$/;
 export default defineConfig({
   testDir: './tests',
   globalSetup: require.resolve('./harness/global-setup'),
@@ -32,6 +39,8 @@ export default defineConfig({
   },
   projects: AGENTS.map((agent) => ({
     name: agent.name,
+    testMatch: agent.stub ? STUB_SPECS : undefined,
+    testIgnore: agent.stub ? undefined : STUB_SPECS,
     use: {
       ...devices['Desktop Chrome'],
       baseURL: baseURLForAgent(agent.name),

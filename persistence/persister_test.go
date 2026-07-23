@@ -84,6 +84,28 @@ func TestPersister_PopulatesModelAndUsageOnTurn(t *testing.T) {
 	}
 }
 
+// TestPersister_RunningOnTurnStart verifies the persisted status flips to
+// running as soon as a turn begins (PromptRequest), before the response arrives.
+// Otherwise a conversation that is actively processing its first prompt is shown
+// as "pending" for the whole turn.
+func TestPersister_RunningOnTurnStart(t *testing.T) {
+	store := db.NewMemStore()
+	p := New(router.New(), store)
+
+	meta := types.ConversationMeta{ConversationID: "conv-run", SessionID: acp.SessionId("sess-run")}
+
+	// Feed only up to PromptRequest: the turn is in progress, no response yet.
+	row := feed(t, p, store,
+		meta,
+		acp.NewSessionResponse{SessionId: meta.SessionID},
+		acp.PromptRequest{SessionId: meta.SessionID},
+	)
+
+	if row.Status != string(types.StatusRunning) {
+		t.Errorf("Status = %q, want running (turn in progress)", row.Status)
+	}
+}
+
 func TestPersister_AccumulatesPromptDuration(t *testing.T) {
 	store := db.NewMemStore()
 	p := New(router.New(), store)

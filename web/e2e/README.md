@@ -56,18 +56,35 @@ ACPP_E2E_RAI_AGENT="rai acp fake" npm run e2e -- --project=rai
 - `ACPP_E2E_RAI_AGENT` (default `rai acp`)
 - `ACPP_E2E_CLAUDE_AGENT` (default `claude-code-acp`)
 
+## The `hang` stub agent
+
+Some behaviour only shows while a turn is *in progress* (e.g. a conversation
+must be persisted as `running`, not `pending`, mid-turn). A real agent finishes
+its turn far too fast to reload into that window, so the suite ships a
+deterministic stub — `fixtures/hang-agent.mjs` — that completes the ACP
+handshake, starts a turn, streams one chunk, then never responds, holding the
+conversation in-progress indefinitely.
+
+It runs as its own Playwright project (`hang`) on port 6073. Because it launches
+under `node` (always present), the project always starts, so its specs always
+run — no agent or credentials required. Specs that need it are named
+`*.stub.spec.ts`; the `hang` project runs only those, and the real-agent projects
+skip them.
+
 ## Layout
 
 ```
 harness/     server + docker lifecycle, config rendering, shared env
-fixtures/    tempProject (git repo + README), server (per-agent skip + baseURL)
+fixtures/    tempProject (git repo + README), server (per-agent skip + baseURL),
+             hang-agent.mjs (deterministic stub ACP agent)
 pages/       Page Objects: SessionsPage, ProjectPage
-tests/       one *.spec.ts per scenario
+tests/       one *.spec.ts per scenario; *.stub.spec.ts run under the stub agent
 ```
 
 ## Adding a scenario
 
 Add a `tests/*.spec.ts` using the `tempProject` fixture and the page objects.
 Add new selectors as getters on the relevant page object — never inline in the
-spec — so the suite stays maintainable as it grows.
+spec — so the suite stays maintainable as it grows. If the scenario needs a turn
+frozen in progress, name it `*.stub.spec.ts` so it runs under the `hang` agent.
 ```

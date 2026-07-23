@@ -19,11 +19,19 @@ export const DB_DSN = `postgres://acpp:acpp@127.0.0.1:${DB_PORT}/acpp?sslmode=di
 // smoke runs (e.g. ACPP_E2E_RAI_AGENT="rai acp fake"). `bin` is the executable
 // that must exist on PATH for the agent to be considered available; when it is
 // missing the server is not started and that project's tests skip.
+//
+// `stub: true` marks a deterministic in-repo stub agent (not a real LLM). Its
+// project runs only the `*.stub.spec.ts` specs, and the real-agent projects skip
+// those — so stub-only behaviour (e.g. a turn held mid-flight) is exercised
+// deterministically without any external agent or credentials. Because the stub
+// runs under `node`, which the e2e suite already requires, this project always
+// starts and its specs always run.
 export interface AgentSpec {
   name: string;
   bin: string;
   command: string;
   port: number;
+  stub?: boolean;
 }
 
 export const AGENTS: AgentSpec[] = [
@@ -38,6 +46,13 @@ export const AGENTS: AgentSpec[] = [
     bin: 'claude-code-acp',
     command: process.env.ACPP_E2E_CLAUDE_AGENT || 'claude-code-acp',
     port: 6072,
+  },
+  {
+    name: 'hang',
+    bin: 'node',
+    command: `node ${path.join(E2E_DIR, 'fixtures', 'hang-agent.mjs')}`,
+    port: 6073,
+    stub: true,
   },
 ];
 
