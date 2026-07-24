@@ -137,17 +137,30 @@ func (a *arena) note(format string, args ...any) {
 	a.mu.Unlock()
 }
 
+// logf writes a progress line to stderr. Arena runs can take many minutes, so
+// each phase and its outcome is announced as it happens.
+func (a *arena) logf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "arena: "+format+"\n", args...)
+}
+
 // executeRuns runs every contestant whose output is not already on disk. Runs
 // execute serially so their sandboxes never contend for shared resources.
 func (a *arena) executeRuns(ctx context.Context) {
-	for _, r := range a.meta.Runs {
+	a.logf("running %d contestant(s)", len(a.meta.Runs))
+	for i, r := range a.meta.Runs {
+		pos := fmt.Sprintf("[%d/%d]", i+1, len(a.meta.Runs))
 		outDir := filepath.Join(a.lo.outputs, r.ID)
 		if fileExists(filepath.Join(outDir, "response.md")) {
+			a.logf("%s skip run %s (%s): response.md already exists", pos, r.Name, r.ID)
 			continue // already complete
 		}
+		a.logf("%s run %s (%s)", pos, r.Name, r.ID)
 		if err := a.executeRun(ctx, r, outDir); err != nil {
+			a.logf("%s run %s (%s) FAILED: %v", pos, r.Name, r.ID, err)
 			a.note("run %q (%s) failed: %v", r.Name, r.ID, err)
+			continue
 		}
+		a.logf("%s run %s (%s) done", pos, r.Name, r.ID)
 	}
 }
 
@@ -204,6 +217,7 @@ func (a *arena) evaluate(ctx context.Context) {
 		wantIDs = append(wantIDs, id)
 	}
 	if len(wantIDs) == 0 {
+		a.logf("no contestant outputs available; skipping evaluation")
 		a.note("no contestant outputs available; skipped evaluation")
 		return
 	}
@@ -213,18 +227,25 @@ func (a *arena) evaluate(ctx context.Context) {
 		evalPrompt = defaultEvalPrompt(len(wantIDs))
 	}
 
+	a.logf("evaluating with %d evaluator(s) over %d output(s)", len(a.meta.Evaluations), len(wantIDs))
 	// Evaluators run serially so their sandboxes never contend for shared
 	// resources.
-	for _, e := range a.meta.Evaluations {
+	for i, e := range a.meta.Evaluations {
+		pos := fmt.Sprintf("[%d/%d]", i+1, len(a.meta.Evaluations))
 		scoresPath := filepath.Join(a.lo.evalRoot, e.ID, "scores.json")
 		if data, err := os.ReadFile(scoresPath); err == nil {
 			if _, err := ParseScores(data, wantIDs); err == nil {
+				a.logf("%s skip eval %s (%s): scores.json already valid", pos, e.Name, e.ID)
 				continue // already valid
 			}
 		}
+		a.logf("%s eval %s (%s)", pos, e.Name, e.ID)
 		if err := a.evaluateOne(ctx, e, evalPrompt, roBinds, wantIDs); err != nil {
+			a.logf("%s eval %s (%s) FAILED: %v", pos, e.Name, e.ID, err)
 			a.note("evaluator %q (%s) failed: %v", e.Name, e.ID, err)
+			continue
 		}
+		a.logf("%s eval %s (%s) done", pos, e.Name, e.ID)
 	}
 }
 
