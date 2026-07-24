@@ -74,6 +74,7 @@
 
   .tool-usage { margin: 0.375em 0; padding: 0.5em 0.875em; background: #f5f5f4; border-radius: 6px; border: 1px solid #e7e5e4; font-size: 0.8125em; transition: background 0.15s, border-color 0.15s; }
   a:hover .tool-usage { background: #eff6ff; border-color: #bfdbfe; }
+  .tool-image { display: block; max-width: 100%; max-height: 400px; margin-top: 0.5em; border-radius: 6px; border: 1px solid #e7e5e4; }
   .tool-usage .tool-header { font-weight: 500; color: #44403c; }
   .tool-usage .tool-params { color: #78716c; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; margin-top: 0.25em; }
 
@@ -410,6 +411,19 @@
     return result.join('\n');
   }
 
+  function extractToolImages(contentArr) {
+    var out = [];
+    if (!Array.isArray(contentArr)) return out;
+    for (var i = 0; i < contentArr.length; i++) {
+      var item = contentArr[i];
+      if (item && item.type === 'content' && item.content &&
+          item.content.type === 'image' && item.content.data) {
+        out.push({ data: item.content.data, mimeType: item.content.mimeType || 'image/png' });
+      }
+    }
+    return out;
+  }
+
   function formatToolUsage(tu) {
     var header = '';
     if (tu.input && tu.input.skill) {
@@ -444,6 +458,11 @@
     }
     var html = linkOpen + '<div class="tool-usage"><div class="tool-header">' + header + '</div>';
     if (params) html += '<div class="tool-params">' + params + '</div>';
+    if (tu.images && tu.images.length) {
+      for (var i = 0; i < tu.images.length; i++) {
+        html += '<img class="tool-image" alt="tool image" src="data:' + tu.images[i].mimeType + ';base64,' + tu.images[i].data + '">';
+      }
+    }
     html += '</div>' + linkClose;
     return html;
   }
@@ -605,6 +624,8 @@
           var inp = extractInput(p.rawInput);
           for (var k in inp) existing.input[k] = inp[k];
         }
+        var imgs = extractToolImages(p.content);
+        if (imgs.length) existing.images = imgs;
         if (p.toolCallId) toolCalls[p.toolCallId] = existing;
         var toolHtml = formatToolUsage(existing);
         var existingEl = p.toolCallId && document.getElementById('tool-' + p.toolCallId);
