@@ -1,3 +1,11 @@
+{{define "taskbarTabs"}}{{range $tab := .ProjectTabs}}
+    <div class="taskbar-tab{{if $tab.Active}} active{{end}}">
+      <a href="/projects?project={{$tab.Name}}" class="taskbar-tab-name">{{$tab.Name}}</a>
+      {{range $tab.Sessions}}
+      <a href="/projects?project={{$tab.Name}}&session={{.ID}}" class="taskbar-dot status-dot-{{.Status}}{{if .Active}} active{{end}}" title="{{.Title}}"></a>
+      {{end}}
+    </div>
+    {{end}}{{end}}
 <!DOCTYPE html>
 <html>
 <head>
@@ -22,6 +30,7 @@
 
   /* Bottom project tab bar (Google Sheets style) */
   .taskbar { flex-shrink: 0; display: flex; align-items: stretch; gap: 0.375em; background: #fff; box-shadow: 0 -2px 6px rgba(16,24,40,0.06); padding: 0.375em 0.75em; overflow-x: auto; }
+  .taskbar-tabs { display: flex; align-items: stretch; gap: 0.375em; }
   .taskbar-new { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 2.25em; border: none; border-radius: 8px; background: #f5f5f4; color: #57534e; cursor: pointer; transition: background 0.15s, color 0.15s; }
   .taskbar-new:hover { background: #e7e5e4; color: #1c1917; }
   .taskbar-tab { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.4em; padding: 0.35em 0.75em; border-radius: 8px; background: #f5f5f4; border: 1px solid transparent; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
@@ -285,14 +294,7 @@
   </div>
   <div class="taskbar">
     {{if .ProjectsEnabled}}<button id="new-project-btn" class="taskbar-new" title="New project"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>{{end}}
-    {{range $tab := .ProjectTabs}}
-    <div class="taskbar-tab{{if $tab.Active}} active{{end}}">
-      <a href="/projects?project={{$tab.Name}}" class="taskbar-tab-name">{{$tab.Name}}</a>
-      {{range $tab.Sessions}}
-      <a href="/projects?project={{$tab.Name}}&session={{.ID}}" class="taskbar-dot status-dot-{{.Status}}{{if .Active}} active{{end}}" title="{{.Title}}"></a>
-      {{end}}
-    </div>
-    {{end}}
+    <div class="taskbar-tabs">{{template "taskbarTabs" .}}</div>
   </div>
 </div>
 
@@ -741,6 +743,40 @@
     };
     ws.onclose = function() { closeAllBlocks(); };
   }
+
+  // Live taskbar: a global lifecycle socket tells us when a session is created,
+  // finished, or replaced ANYWHERE (not just the one this page is viewing), so
+  // the bottom bar can refresh without a full reload. It re-fetches the taskbar
+  // fragment (single source of truth in Go) rather than patching the DOM itself.
+  var taskbarTimer = null;
+  function scheduleTaskbarRefresh() {
+    clearTimeout(taskbarTimer);
+    taskbarTimer = setTimeout(refreshTaskbar, 250);
+  }
+  function refreshTaskbar() {
+    var url = '/projects/taskbar?project=' + encodeURIComponent(activeProject || '') +
+              '&session=' + encodeURIComponent(sessionId || '');
+    fetch(url)
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var tabs = document.querySelector('.taskbar-tabs');
+        if (tabs) tabs.innerHTML = html;
+      })
+      .catch(function() { /* stale bar until the next nudge; not worth surfacing */ });
+  }
+  function connectLifecycle() {
+    var proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+    var lws = new WebSocket(proto + '//' + location.host + '/events/ws');
+    lws.onmessage = function(e) {
+      var ev;
+      try { ev = JSON.parse(e.data); } catch (err) { return; }
+      if (ev.event_type === 'session_lifecycle') scheduleTaskbarRefresh();
+    };
+    // Reconnect: unlike the per-session socket, a dropped lifecycle socket would
+    // silently freeze the taskbar, so keep trying.
+    lws.onclose = function() { setTimeout(connectLifecycle, 2000); };
+  }
+  connectLifecycle();
 
   // Prompt sending
   var input = document.getElementById('prompt-input');

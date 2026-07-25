@@ -136,28 +136,54 @@ func (s *Server) buildProjectTabs(ctx context.Context, projects []db.ProjectList
 	return tabs, nil
 }
 
+// listProjectRows returns the project rows used to build the tab bar, either
+// from the ProjectStore or, when none is configured, synthesised from the
+// distinct session directories.
+func (s *Server) listProjectRows(ctx context.Context) ([]db.ProjectListRow, error) {
+	if s.projects != nil {
+		return s.projects.ListProjects(ctx)
+	}
+	dirs, err := s.store.ListProjectDirs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	projects := make([]db.ProjectListRow, 0, len(dirs))
+	for _, d := range dirs {
+		projects = append(projects, db.ProjectListRow{
+			Name:       filepath.Base(d.Dir),
+			Dir:        d.Dir,
+			HasRunning: d.HasRunning,
+		})
+	}
+	return projects, nil
+}
+
+// viewTaskbar renders just the bottom tab bar's tabs as an HTML fragment,
+// reusing buildProjectTabs so the live-updated bar can never drift from the
+// server-rendered one. The /projects page fetches it on a lifecycle nudge,
+// passing its current project/session so the active tab and dot stay marked for
+// this browser's view.
+func (s *Server) viewTaskbar(c echo.Context) error {
+	ctx := c.Request().Context()
+	projects, err := s.listProjectRows(ctx)
+	if err != nil {
+		return err
+	}
+	tabs, err := s.buildProjectTabs(ctx, projects, c.QueryParam("project"), c.QueryParam("session"))
+	if err != nil {
+		return err
+	}
+	return c.Render(http.StatusOK, "taskbarTabs", map[string]interface{}{
+		"ProjectTabs": tabs,
+	})
+}
+
 func (s *Server) viewProjects(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	var projects []db.ProjectListRow
-	if s.projects != nil {
-		var err error
-		projects, err = s.projects.ListProjects(ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		dirs, err := s.store.ListProjectDirs(ctx)
-		if err != nil {
-			return err
-		}
-		for _, d := range dirs {
-			projects = append(projects, db.ProjectListRow{
-				Name:       filepath.Base(d.Dir),
-				Dir:        d.Dir,
-				HasRunning: d.HasRunning,
-			})
-		}
+	projects, err := s.listProjectRows(ctx)
+	if err != nil {
+		return err
 	}
 
 	activeProject := c.QueryParam("project")

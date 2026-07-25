@@ -89,9 +89,18 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 		// persisted history replays. Carries both text and any pasted images.
 		payload, _ := json.Marshal(types.PromptEchoFromBlocks(m.Prompt))
 		c.publish(id.ConversationID, "prompt", payload)
+		// Turn start flips the session pending -> running, changing its taskbar
+		// dot from yellow to green; nudge the bar to re-render.
+		c.publishLifecycle(id.ConversationID, "running")
 	case acp.PromptResponse:
 		// The turn has finished; the frontend draws a separator on this event.
 		c.publish(id.ConversationID, "prompt_finished", json.RawMessage(`{}`))
+	case types.ConversationCreated:
+		// A new session row exists (pending): it should appear in the taskbar.
+		c.publishLifecycle(id.ConversationID, "created")
+	case types.ConversationClosed:
+		// The session finished/errored: it drops out of the taskbar's live filter.
+		c.publishLifecycle(id.ConversationID, "closed")
 	case types.ConversationReplaced:
 		c.handleReplaced(m)
 	}
@@ -119,11 +128,23 @@ func (c *WebChannel) handleReplaced(rep types.ConversationReplaced) {
 	payload, _ := json.Marshal(map[string]string{"new_session_id": newID})
 	// Publish on the OLD id: that's the page currently holding the WebSocket.
 	c.hub.Publish(oldID, logEntry{EventType: "session_replaced", Payload: payload})
+	// The old session finished and a fresh one took its place: other browsers on
+	// /projects need their taskbar refreshed even though they don't hold oldID.
+	c.publishLifecycle(newID, "replaced")
 }
 
 // publish sends one event to live WebSocket subscribers of a session.
 func (c *WebChannel) publish(sessionID, eventType string, raw json.RawMessage) {
 	c.hub.Publish(sessionID, logEntry{EventType: eventType, Payload: raw})
+}
+
+// publishLifecycle broadcasts a thin "something changed, refresh" nudge to every
+// browser subscribed to the global LifecycleTopic (the /projects taskbar). The
+// payload is deliberately minimal; the client re-fetches the taskbar fragment
+// rather than trusting any state carried here.
+func (c *WebChannel) publishLifecycle(sessionID, phase string) {
+	payload, _ := json.Marshal(map[string]string{"session_id": sessionID, "phase": phase})
+	c.hub.Publish(LifecycleTopic, logEntry{EventType: "session_lifecycle", Payload: payload})
 }
 
 // StartSessionWeb creates a new conversation through the router and returns its

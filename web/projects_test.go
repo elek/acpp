@@ -159,3 +159,33 @@ func TestCreateProjectNoStore(t *testing.T) {
 		t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestViewTaskbarFragment(t *testing.T) {
+	store := seedStore(t)
+	s := New(store, ":0").WithProjects(store)
+
+	rec := doGet(t, s, "/projects/taskbar?project=acpp&session=s1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// It is a fragment, not the whole page.
+	if strings.Contains(body, "<!DOCTYPE") || strings.Contains(body, "id=\"new-project-btn\"") {
+		t.Errorf("taskbar endpoint returned a full page, want just the tabs fragment:\n%s", body)
+	}
+	// The active running session appears as an active dot; the completed one is
+	// filtered out of the live bar.
+	if !strings.Contains(body, "session=s1") {
+		t.Errorf("running session s1 not rendered in taskbar:\n%s", body)
+	}
+	if !strings.Contains(body, "status-dot-running") {
+		t.Errorf("running dot class missing:\n%s", body)
+	}
+	if !strings.Contains(body, "taskbar-dot status-dot-running active") {
+		t.Errorf("active session s1 not marked active:\n%s", body)
+	}
+	if strings.Contains(body, "session=s2") {
+		t.Errorf("completed session s2 should be filtered out of the taskbar:\n%s", body)
+	}
+}

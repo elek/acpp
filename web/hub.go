@@ -5,6 +5,12 @@ import (
 	"sync"
 )
 
+// LifecycleTopic is a reserved Hub key (not a real session ID) carrying global
+// session-lifecycle nudges — created/closed/replaced/turn-start — to every
+// browser on the /projects page so the bottom taskbar can refresh live. Real
+// session IDs are UUIDs and never collide with it.
+const LifecycleTopic = "__lifecycle__"
+
 // Hub manages WebSocket subscribers per session ID.
 // Controller publishes events here; connected WebSocket clients receive them.
 type Hub struct {

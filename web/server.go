@@ -140,6 +140,7 @@ func New(store db.SessionReader, addr string) *Server {
 	e.GET("/", func(c echo.Context) error { return c.Redirect(http.StatusFound, "/projects") })
 	e.GET("/sessions", s.listSessions)
 	e.GET("/projects", s.viewProjects)
+	e.GET("/projects/taskbar", s.viewTaskbar)
 	e.POST("/projects", s.createProject)
 	e.POST("/projects/session", s.createProjectSession)
 	e.GET("/session/:id", s.viewSession)
@@ -147,6 +148,7 @@ func New(store db.SessionReader, addr string) *Server {
 	e.GET("/session/:id/tool/:toolCallId", s.viewToolCall)
 	e.GET("/session/:id/events", s.sessionEvents)
 	e.GET("/session/:id/ws", s.sessionWebSocket)
+	e.GET("/events/ws", s.lifecycleWebSocket)
 	e.POST("/session", s.createSession)
 	e.POST("/session/:id/stop", s.stopSession)
 	e.POST("/session/:id/prompt", s.sendPrompt)
@@ -405,15 +407,27 @@ func (s *Server) viewCompare(c echo.Context) error {
 }
 
 func (s *Server) sessionWebSocket(c echo.Context) error {
-	id := c.Param("id")
+	return s.serveWebSocket(c, c.Param("id"))
+}
+
+// lifecycleWebSocket subscribes a /projects page to the global LifecycleTopic so
+// its taskbar can react to sessions created/closed anywhere, not just the one
+// session a per-session socket is bound to.
+func (s *Server) lifecycleWebSocket(c echo.Context) error {
+	return s.serveWebSocket(c, LifecycleTopic)
+}
+
+// serveWebSocket upgrades the request and pumps every Hub message published to
+// topic down to the client until either side closes.
+func (s *Server) serveWebSocket(c echo.Context, topic string) error {
 	ws, err := s.upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		return err
 	}
 	defer ws.Close()
 
-	sub := s.hub.Subscribe(id)
-	defer s.hub.Unsubscribe(id, sub)
+	sub := s.hub.Subscribe(topic)
+	defer s.hub.Unsubscribe(topic, sub)
 
 	// Read pump: discard incoming messages, detect close.
 	done := make(chan struct{})
