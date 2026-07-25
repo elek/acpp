@@ -111,6 +111,69 @@ func TestAPIProjects(t *testing.T) {
 	}
 }
 
+func TestBuildProjectTabs(t *testing.T) {
+	store := seedStore(t)
+	ctx := context.Background()
+
+	// A second project whose only session is finished; it must not appear in the
+	// bottom bar because it has no pending/running session.
+	dir2 := "/tmp/does-not-exist/idle"
+	if err := store.SetProjectField(ctx, "idle", "dir", dir2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertSession(ctx, "i1", "web", "claude", dir2, "", "", "", "idle", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishSession(ctx, "i1", acplib.StatusInfo{Status: acplib.StatusComplete}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store, ":0").WithProjects(store)
+	projects, err := store.ListProjects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tabs, err := s.buildProjectTabs(ctx, projects, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only "acpp" has an active session; "idle" is dropped.
+	if len(tabs) != 1 {
+		t.Fatalf("got %d tabs, want 1: %+v", len(tabs), tabs)
+	}
+	if tabs[0].Name != "acpp" {
+		t.Fatalf("tab name = %q, want acpp", tabs[0].Name)
+	}
+	// Only the running session s1 is shown; the completed s2 is filtered out.
+	if len(tabs[0].Sessions) != 1 {
+		t.Fatalf("got %d session dots, want 1: %+v", len(tabs[0].Sessions), tabs[0].Sessions)
+	}
+	if dot := tabs[0].Sessions[0]; dot.ID != "s1" || dot.Status != "running" {
+		t.Fatalf("dot = %+v, want s1/running", dot)
+	}
+
+	// The active project stays in the bar even with no active session, so
+	// navigating to an idle project doesn't drop its own tab.
+	tabs, err = s.buildProjectTabs(ctx, projects, "idle", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawIdle bool
+	for _, tab := range tabs {
+		if tab.Name == "idle" {
+			sawIdle = true
+			if len(tab.Sessions) != 0 {
+				t.Errorf("idle tab has %d dots, want 0", len(tab.Sessions))
+			}
+		}
+	}
+	if !sawIdle {
+		t.Errorf("active project 'idle' missing from tabs: %+v", tabs)
+	}
+}
+
 func TestAPISessions(t *testing.T) {
 	store := seedStore(t)
 	s := New(store, ":0").WithProjects(store)

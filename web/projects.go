@@ -111,8 +111,12 @@ func (s *Server) buildProjectTabs(ctx context.Context, projects []db.ProjectList
 			Active:     p.Name == activeProject,
 			HasRunning: p.HasRunning,
 		}
-		for i, sess := range byProject[p.Name] {
-			if i >= tabDotLimit {
+		for _, sess := range byProject[p.Name] {
+			// The bottom bar surfaces only live work: pending/running sessions.
+			if sess.Status != "running" && sess.Status != "pending" {
+				continue
+			}
+			if len(tab.Sessions) >= tabDotLimit {
 				break
 			}
 			tab.Sessions = append(tab.Sessions, projectTabDot{
@@ -121,6 +125,11 @@ func (s *Server) buildProjectTabs(ctx context.Context, projects []db.ProjectList
 				Title:  sess.CreatedAt.Format("Jan 2 15:04") + " — " + sess.Status,
 				Active: tab.Active && sess.ID == activeSessionID,
 			})
+		}
+		// Include a project only when it has at least one active session. The
+		// active project always stays so navigating to it doesn't drop its tab.
+		if len(tab.Sessions) == 0 && !tab.Active {
+			continue
 		}
 		tabs = append(tabs, tab)
 	}
