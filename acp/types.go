@@ -660,6 +660,26 @@ type PromptResponse struct {
 	Usage      *Usage         `json:"usage,omitempty"`
 }
 
+// ResponseError is delivered to the Client when one of our outbound requests
+// (initialize, session/new, session/prompt, …) receives a JSON-RPC error
+// response instead of a result — for example when the agent hits an upstream
+// rate limit while handling a prompt. Method is the request that failed. It is
+// delivered through the same Client callback as a normal response so that
+// callers awaiting that request's completion can observe the failure instead of
+// blocking forever.
+type ResponseError struct {
+	Method string
+	Err    *RequestError
+}
+
+// Error implements error so a ResponseError can be returned/propagated directly.
+func (e ResponseError) Error() string {
+	if e.Err == nil {
+		return "acp: error response for " + e.Method
+	}
+	return "acp: error response for " + e.Method + ": " + e.Err.Error()
+}
+
 // ---- session/cancel ----
 
 // CancelNotification cancels operations for a session.

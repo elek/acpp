@@ -116,6 +116,30 @@ func TestClaude(t *testing.T) {
 // TestCloseConversationFansClosed verifies that closing a conversation emits a
 // ConversationClosed event to subscribers so they can finalize per-conversation
 // state (the persister relies on this to mark sessions complete).
+// TestWaitReadyUnblocksOnHandshakeError verifies that an errored response to a
+// handshake request (initialize / session/new) unblocks WaitReady with the
+// error, instead of leaving it hung forever waiting for a SessionID that will
+// never be assigned.
+func TestWaitReadyUnblocksOnHandshakeError(t *testing.T) {
+	rt := New()
+	meta := types.ConversationMeta{ConversationID: "conv-h"}
+	state := &SessionState{meta: meta, ready: make(chan struct{})}
+	rt.mu.Lock()
+	rt.sessions[meta.ConversationID] = state
+	rt.mu.Unlock()
+
+	go rt.onMessage(context.Background(), state, nil, acp.ResponseError{
+		Method: acp.AgentMethodSessionNew,
+		Err:    acp.NewInternalError(map[string]any{"message": "boom"}),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := rt.WaitReady(ctx, meta)
+	require.Error(t, err, "WaitReady must return the handshake error, not block")
+	require.NotErrorIs(t, err, context.DeadlineExceeded, "WaitReady must not time out")
+}
+
 func TestCloseConversationFansClosed(t *testing.T) {
 	rt := New()
 	meta := types.ConversationMeta{ConversationID: "conv-x", SessionID: acp.SessionId("sess-x")}

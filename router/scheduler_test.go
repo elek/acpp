@@ -247,6 +247,36 @@ func TestScheduler_ConversationClosedReleasesJob(t *testing.T) {
 	s.mu.Unlock()
 }
 
+func TestScheduler_ResponseErrorReleasesJob(t *testing.T) {
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "test.md")
+	require.NoError(t, os.WriteFile(promptFile, []byte("test prompt"), 0644))
+
+	conv := newFakeConversations()
+	cfg := &config.Config{Defaults: config.Defaults{Agent: "stub"}}
+	s := NewScheduler(conv, cfg, db.NewMemStore())
+
+	job := config.ScheduledJob{Name: "error-test", Prompt: promptFile, Dir: dir}
+	s.runJob(job)
+	require.Len(t, conv.created, 1)
+	s.mu.Lock()
+	require.True(t, s.running["error-test"])
+	s.mu.Unlock()
+
+	// The agent rejects the prompt with an error (e.g. an upstream rate limit)
+	// instead of completing the turn. No PromptResponse arrives, so the job must
+	// still be freed, otherwise every future tick is skipped as "previous run
+	// still active".
+	s.Receive(context.Background(), nil, conv.created[0], acp.ResponseError{
+		Method: acp.AgentMethodSessionPrompt,
+		Err:    acp.NewInternalError(map[string]any{"message": "429 Too Many Requests"}),
+	})
+
+	s.mu.Lock()
+	require.False(t, s.running["error-test"], "job must be released when its prompt errors")
+	s.mu.Unlock()
+}
+
 func TestScheduler_ReuseSession(t *testing.T) {
 	dir := t.TempDir()
 	promptFile := filepath.Join(dir, "test.md")

@@ -33,7 +33,15 @@ func (c *ClientSideConnection) Done() <-chan struct{} { return c.conn.Done() }
 func (c *ClientSideConnection) SetLogger(l *slog.Logger) { c.conn.SetLogger(l) }
 
 // handle dispatches inbound agent->client methods to the Client implementation.
-func (c *ClientSideConnection) handle(ctx context.Context, id *json.RawMessage, method string, params json.RawMessage) *RequestError {
+func (c *ClientSideConnection) handle(ctx context.Context, id *json.RawMessage, method string, params json.RawMessage, respErr *RequestError) *RequestError {
+	// An errored response to one of our outbound requests (initialize,
+	// session/new, session/prompt, …) is surfaced to the Client as a
+	// ResponseError so a caller awaiting that request can react instead of
+	// hanging on a result that will never arrive.
+	if respErr != nil {
+		c.client(ctx, id, ResponseError{Method: method, Err: respErr})
+		return nil
+	}
 	switch method {
 	// ---- responses to our outbound agent requests (id-less by the time they
 	// reach here; Connection has already correlated them to their method) ----

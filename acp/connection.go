@@ -23,11 +23,15 @@ type anyMessage struct {
 	Error   *RequestError    `json:"error,omitempty"`
 }
 
-// MethodHandler handles an inbound request or notification. For notifications
-// id is nil and the returned value is ignored. For requests, returning a non-nil
-// *RequestError produces a JSON-RPC error response. Returning nil for a request
-// means the handler will send the response asynchronously via SendResponse.
-type MethodHandler func(ctx context.Context, id *json.RawMessage, method string, params json.RawMessage) *RequestError
+// MethodHandler handles an inbound request or notification, or a response to one
+// of our outbound requests. For notifications id is nil and the returned value
+// is ignored. For requests, returning a non-nil *RequestError produces a
+// JSON-RPC error response; returning nil means the handler will send the
+// response asynchronously via SendResponse. For a response to an outbound
+// request, params carries the result on success; on failure params is nil and
+// respErr carries the peer's error so the handler can surface it to its caller
+// rather than dropping it.
+type MethodHandler func(ctx context.Context, id *json.RawMessage, method string, params json.RawMessage, respErr *RequestError) *RequestError
 
 // Connection is a JSON-RPC 2.0 connection over line-delimited JSON (stdio).
 //
@@ -138,10 +142,16 @@ func (c *Connection) dispatchResponse(msg *anyMessage) {
 	}
 	if msg.Error != nil {
 		c.log().Error("acp: error response", "method", method, "error", msg.Error)
+		// Deliver the failure to the handler so a caller awaiting this request's
+		// completion observes it, instead of blocking forever on a response that
+		// will never come.
+		if c.handler != nil {
+			c.handler(c.ctx, nil, method, nil, msg.Error)
+		}
 		return
 	}
 	if c.handler != nil {
-		if rerr := c.handler(c.ctx, nil, method, msg.Result); rerr != nil {
+		if rerr := c.handler(c.ctx, nil, method, msg.Result, nil); rerr != nil {
 			c.log().Error("acp: failed to handle response", "method", method, "err", rerr)
 		}
 	}
@@ -165,7 +175,7 @@ func (c *Connection) handleInbound(req *anyMessage) {
 		return
 	}
 
-	rerr := c.handler(c.ctx, req.ID, req.Method, req.Params)
+	rerr := c.handler(c.ctx, req.ID, req.Method, req.Params, nil)
 
 	if req.ID == nil {
 		// Notification: no response. Surface unexpected handler errors, but

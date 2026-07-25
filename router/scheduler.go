@@ -77,9 +77,14 @@ func NewScheduler(conv conversations, cfg *config.Config, projects db.ProjectSto
 // later tick as "previous run still active".
 func (s *Scheduler) Receive(_ context.Context, _ *json.RawMessage, id types.ConversationMeta, msg any) {
 	var reason string
-	switch msg.(type) {
+	switch m := msg.(type) {
 	case acp.PromptResponse:
 		reason = "turn completed"
+	case acp.ResponseError:
+		// The agent rejected the prompt with an error (e.g. an upstream rate
+		// limit). No PromptResponse will arrive, so release the job here rather
+		// than wedging every later tick as "previous run still active".
+		reason = "prompt failed: " + m.Error()
 	case types.ConversationClosed:
 		reason = "conversation closed before turn completed"
 	default:

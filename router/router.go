@@ -97,6 +97,10 @@ type SessionState struct {
 	// session/new response). Restart replaces it to wait for the next session.
 	// Guarded by Router.mu; nil once already consumed.
 	ready chan struct{}
+	// handshakeErr records an errored response to a handshake request (initialize
+	// / session/new); it closes ready so WaitReady returns this error instead of
+	// blocking for a SessionID that will never arrive. Guarded by Router.mu.
+	handshakeErr error
 	// availableCommands holds the latest set of commands the agent advertised via
 	// an available_commands_update notification (the only place the agent exposes
 	// them — they are absent from the initialize/session-new responses). Used by
@@ -455,6 +459,22 @@ func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.R
 			close(ready)
 		}
 		return
+	case acp.ResponseError:
+		// An outbound request failed. A failure during the handshake (before the
+		// SessionID is assigned) means no session/new response will ever arrive, so
+		// unblock WaitReady with the error rather than leaving it hung. A
+		// post-handshake failure (a prompt error) leaves ready untouched and just
+		// fans out below, where subscribers end the turn.
+		r.mu.Lock()
+		if state.ready != nil {
+			state.handshakeErr = m
+			close(state.ready)
+			state.ready = nil
+		}
+		meta := state.meta
+		r.mu.Unlock()
+		r.deliver(ctx, state, rid, meta, msg)
+		return
 	default:
 		r.mu.Lock()
 		// Capture the agent's advertised commands so /help can list them; this
@@ -492,7 +512,11 @@ func (r *Router) WaitReady(ctx context.Context, id types.ConversationMeta) (type
 	}
 	r.mu.RLock()
 	meta := state.meta
+	herr := state.handshakeErr
 	r.mu.RUnlock()
+	if herr != nil {
+		return meta, herr
+	}
 	return meta, nil
 }
 

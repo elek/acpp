@@ -87,6 +87,11 @@ func (c *collector) Receive(ctx context.Context, rid *json.RawMessage, id types.
 		b.mu.Unlock()
 	case acp.PromptResponse:
 		b.finish(terminal{stopReason: string(m.StopReason)})
+	case acp.ResponseError:
+		// The agent rejected the prompt (or a handshake request) with an error —
+		// e.g. an upstream rate limit. No PromptResponse will follow, so end the
+		// turn here with the error instead of blocking until the context expires.
+		b.finish(terminal{stopReason: "error", err: m.Error()})
 	case types.ConversationClosed:
 		b.finish(terminal{stopReason: "closed", err: m.Err})
 	}
