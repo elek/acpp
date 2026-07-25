@@ -3,6 +3,7 @@ module github.com/elek/acpp/desktop
 go 1.26.3
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/wailsapp/wails/v2 v2.12.0
 	gopkg.in/yaml.v3 v3.0.1
 )

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"fyne.io/systray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +28,12 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startTray()
+}
+
+// shutdown removes the tray icon so it disappears when the app exits.
+func (a *App) shutdown(ctx context.Context) {
+	systray.Quit()
 }
 
 func (a *App) domReady(ctx context.Context) {
