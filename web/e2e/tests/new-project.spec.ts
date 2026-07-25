@@ -1,9 +1,9 @@
 import { test, expect } from '../fixtures';
 import { ProjectPage } from '../pages/ProjectPage';
 
-// The /projects sidebar offers a "+" button that opens a modal to create a new
-// project. Creating one with a name (and an explicit directory) persists a
-// project row, navigates to its view, and lists it in the sidebar — all without
+// The /projects bottom tab bar offers a "+" button that opens a modal to create
+// a new project. Creating one with a name (and an explicit directory) persists a
+// project row, navigates to its view, and lists it in the tab bar — all without
 // starting a session.
 test('new-project button creates a project and navigates to it', async ({
   page,
@@ -14,18 +14,18 @@ test('new-project button creates a project and navigates to it', async ({
 
   await project.createProject(tempProject.name, tempProject.dir);
 
-  // The URL now targets the new project and the sidebar lists it.
+  // The URL now targets the new project and the tab bar lists it.
   expect(new URL(page.url()).searchParams.get('project')).toBe(tempProject.name);
   await expect(project.projectTitle).toHaveText(tempProject.name);
   await expect(
-    project.sidebarProjects.filter({ hasText: tempProject.name }),
+    project.projectTabs.filter({ hasText: tempProject.name }),
   ).toHaveCount(1);
 
   // Reloading the bare list keeps the project — it was persisted, not just added
   // to the DOM.
   await project.gotoProjects();
   await expect(
-    project.sidebarProjects.filter({ hasText: tempProject.name }),
+    project.projectTabs.filter({ hasText: tempProject.name }),
   ).toHaveCount(1);
 });
 

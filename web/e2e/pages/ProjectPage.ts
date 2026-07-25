@@ -27,7 +27,7 @@ export class ProjectPage {
   readonly newProjectDir: Locator;
   readonly newProjectCreate: Locator;
   readonly newProjectError: Locator;
-  readonly sidebarProjects: Locator;
+  readonly projectTabs: Locator;
   readonly projectTitle: Locator;
 
   constructor(private readonly page: Page) {
@@ -52,14 +52,14 @@ export class ProjectPage {
     this.separators = page.locator('#conversation .prompt-separator');
     this.commandEchoes = page.locator('#conversation .msg-command .msg-content');
     this.commandResponses = page.locator('#conversation .msg-command-response .msg-content');
-    // New-project modal in the sidebar header.
+    // New-project modal, opened from the "+" button in the bottom tab bar.
     this.newProjectButton = page.locator('#new-project-btn');
     this.newProjectModal = page.locator('#np-overlay');
     this.newProjectName = page.locator('#np-name');
     this.newProjectDir = page.locator('#np-dir');
     this.newProjectCreate = page.locator('#np-create');
     this.newProjectError = page.locator('#np-error');
-    this.sidebarProjects = page.locator('.sidebar .project-item');
+    this.projectTabs = page.locator('.taskbar .taskbar-tab-name');
     this.projectTitle = page.locator('.session-bar .project-title');
   }
 
@@ -68,8 +68,8 @@ export class ProjectPage {
     await expect(this.promptInput).toBeVisible();
   }
 
-  // gotoProjects opens the bare project list (no active project). The sidebar and
-  // its "+" new-project button are always present; the prompt bar is not.
+  // gotoProjects opens the bare project list (no active project). The bottom tab
+  // bar and its "+" new-project button are always present; the prompt bar is not.
   async gotoProjects(): Promise<void> {
     await this.page.goto('/projects');
     await expect(this.newProjectButton).toBeVisible();

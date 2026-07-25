@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -66,6 +67,66 @@ func (s *Server) createProject(c echo.Context) error {
 	return c.JSON(http.StatusCreated, map[string]string{"id": name})
 }
 
+// tabDotLimit caps how many session dots a single project tab renders, keeping
+// the bottom bar compact even for projects with a long session history.
+const tabDotLimit = 8
+
+// projectTab is the bottom-bar view model for one project: the tab label plus a
+// bounded set of recent sessions shown as status dots.
+type projectTab struct {
+	Name       string
+	Dir        string
+	Active     bool
+	HasRunning bool
+	Sessions   []projectTabDot
+}
+
+// projectTabDot is a single session rendered as a dot in a project tab.
+type projectTabDot struct {
+	ID     string
+	Status string
+	Title  string
+	Active bool
+}
+
+// buildProjectTabs groups all sessions by project once and assembles the tab
+// bar model, marking the active project and active session.
+func (s *Server) buildProjectTabs(ctx context.Context, projects []db.ProjectListRow, activeProject, activeSessionID string) ([]projectTab, error) {
+	allSessions, err := s.store.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// ListSessions is ordered created_at DESC, so each project's slice is
+	// already recent-first.
+	byProject := make(map[string][]db.SessionRow, len(projects))
+	for _, sess := range allSessions {
+		byProject[sess.ProjectName] = append(byProject[sess.ProjectName], sess)
+	}
+
+	tabs := make([]projectTab, 0, len(projects))
+	for _, p := range projects {
+		tab := projectTab{
+			Name:       p.Name,
+			Dir:        p.Dir,
+			Active:     p.Name == activeProject,
+			HasRunning: p.HasRunning,
+		}
+		for i, sess := range byProject[p.Name] {
+			if i >= tabDotLimit {
+				break
+			}
+			tab.Sessions = append(tab.Sessions, projectTabDot{
+				ID:     sess.ID,
+				Status: sess.Status,
+				Title:  sess.CreatedAt.Format("Jan 2 15:04") + " — " + sess.Status,
+				Active: tab.Active && sess.ID == activeSessionID,
+			})
+		}
+		tabs = append(tabs, tab)
+	}
+	return tabs, nil
+}
+
 func (s *Server) viewProjects(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -102,8 +163,17 @@ func (s *Server) viewProjects(c echo.Context) error {
 		}
 	}
 
+	// Build the bottom tab bar model: one tab per project, each carrying a few
+	// recent sessions rendered as status dots. A single ListSessions call is
+	// grouped by project name to avoid a query per project.
+	tabs, err := s.buildProjectTabs(ctx, projects, activeProject, activeSessionID)
+	if err != nil {
+		return err
+	}
+
 	data := map[string]interface{}{
 		"Projects":        projects,
+		"ProjectTabs":     tabs,
 		"CurrentPage":     "projects",
 		"ActiveProject":   activeProject,
 		"ActiveDir":       activeDir,
