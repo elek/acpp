@@ -3,10 +3,9 @@ import { SessionsPage } from '../pages/SessionsPage';
 import { ProjectPage } from '../pages/ProjectPage';
 
 // A 1x1 red PNG — the smallest valid image to stage and round-trip.
-const RED_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-  'base64',
-);
+const RED_PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+const RED_PNG = Buffer.from(RED_PNG_B64, 'base64');
 
 // Scenario: stage an image on the prompt bar (via the file input, the same path
 // paste/drop feed), send it with text, and verify the user's turn echoes the
@@ -37,4 +36,24 @@ test('attach an image with text and see it echoed', async ({ page, tempProject }
   // A turn completes with some answer (content left loose).
   await project.waitForResponse();
   expect((await project.responseText()).length).toBeGreaterThan(0);
+});
+
+// Regression: on WebKit-based desktop wrappers (WebKitGTK / WKWebView) a pasted
+// image is exposed through clipboardData.files, not clipboardData.items. A
+// handler that only reads .items stages nothing there while working fine in a
+// Chromium browser — exactly "paste works in the webapp but not the desktop
+// app". Assert the .files path stages the image.
+test('paste an image exposed only via clipboardData.files stages it (WebKit)', async ({
+  page,
+  tempProject,
+}) => {
+  const sessions = new SessionsPage(page);
+  await sessions.goto();
+  await sessions.createSession(tempProject.dir);
+
+  const project = new ProjectPage(page);
+  await project.goto(tempProject.name);
+
+  await project.pasteImageViaFiles('red.png', 'image/png', RED_PNG_B64);
+  await expect(project.attachmentThumbs).toHaveCount(1);
 });

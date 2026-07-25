@@ -126,6 +126,26 @@ export class ProjectPage {
     await expect.poll(() => this.attachmentThumbs.count()).toBeGreaterThan(before);
   }
 
+  // pasteImageViaFiles simulates a clipboard paste where the image is exposed
+  // ONLY through clipboardData.files and NOT clipboardData.items — the behaviour
+  // of WebKit engines (WebKitGTK on Linux, WKWebView on macOS) used by native
+  // desktop wrappers. Chromium (the browser "webapp") populates .items instead,
+  // so this path is what desktop apps exercise and browsers never do.
+  async pasteImageViaFiles(name: string, mimeType: string, base64: string): Promise<void> {
+    const before = await this.attachmentThumbs.count();
+    await this.promptInput.evaluate((el, args) => {
+      const bin = atob(args.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const file = new File([bytes], args.name, { type: args.mimeType });
+      const ev = new Event('paste', { bubbles: true, cancelable: true });
+      // WebKit-style clipboard: image reachable via .files, .items empty.
+      Object.defineProperty(ev, 'clipboardData', { value: { items: [], files: [file] } });
+      el.dispatchEvent(ev);
+    }, { name, mimeType, base64 });
+    await expect.poll(() => this.attachmentThumbs.count()).toBeGreaterThan(before);
+  }
+
   private turnsBefore = 0;
 
   // waitForResponse blocks until the turn started by the last send() completes

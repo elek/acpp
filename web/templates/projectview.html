@@ -1092,9 +1092,22 @@
     // Paste: stage any image items from the clipboard. Plain-text paste falls
     // through to the textarea untouched.
     input.addEventListener('paste', function(e) {
-      var items = (e.clipboardData || {}).items || [];
+      var cd = e.clipboardData || {};
+      var items = cd.items || [];
+      var staged = false;
       for (var i = 0; i < items.length; i++) {
-        if (items[i].type && items[i].type.indexOf('image/') === 0) addImage(items[i].getAsFile());
+        if (items[i].type && items[i].type.indexOf('image/') === 0) {
+          addImage(items[i].getAsFile());
+          staged = true;
+        }
+      }
+      // WebKit engines (WebKitGTK on Linux, WKWebView on macOS) used by native
+      // desktop wrappers expose a pasted image via clipboardData.files, not
+      // .items. Fall back to it when .items had no image so paste works outside
+      // Chromium browsers too.
+      if (!staged) {
+        var files = cd.files || [];
+        for (var j = 0; j < files.length; j++) addImage(files[j]);
       }
     });
 
