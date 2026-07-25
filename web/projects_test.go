@@ -189,3 +189,38 @@ func TestViewTaskbarFragment(t *testing.T) {
 		t.Errorf("completed session s2 should be filtered out of the taskbar:\n%s", body)
 	}
 }
+
+func TestViewProjectDetail(t *testing.T) {
+	store := seedStore(t)
+	s := New(store, ":0").WithProjects(store)
+
+	rec := doGet(t, s, "/project/acpp")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Both sections render, split by status.
+	if !strings.Contains(body, "Active Sessions") || !strings.Contains(body, "Closed Sessions") {
+		t.Errorf("both session sections should render:\n%s", body)
+	}
+	// The running session (s1) opens as a card, the completed one (s2) too.
+	if !strings.Contains(body, "session=s1") {
+		t.Errorf("active session card for s1 missing:\n%s", body)
+	}
+	if !strings.Contains(body, "session=s2") {
+		t.Errorf("closed session card for s2 missing:\n%s", body)
+	}
+	// The closed session's first prompt is previewed on its card.
+	if !strings.Contains(body, "Add /help command") {
+		t.Errorf("prompt preview for s2 missing:\n%s", body)
+	}
+	// Configuration surfaces the project's stored fields.
+	if !strings.Contains(body, "Configuration") || !strings.Contains(body, ">agent<") {
+		t.Errorf("configuration table missing project fields:\n%s", body)
+	}
+	// The nav uses the renamed "Workplace" label.
+	if !strings.Contains(body, ">Workplace</a>") {
+		t.Errorf("nav should use the Workplace label:\n%s", body)
+	}
+}

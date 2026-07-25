@@ -141,6 +141,7 @@ func New(store db.SessionReader, addr string) *Server {
 	e.GET("/sessions", s.listSessions)
 	e.GET("/projects", s.viewProjects)
 	e.GET("/projects/taskbar", s.viewTaskbar)
+	e.GET("/project/:name", s.viewProjectDetail)
 	e.POST("/projects", s.createProject)
 	e.POST("/projects/session", s.createProjectSession)
 	e.GET("/session/:id", s.viewSession)

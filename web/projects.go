@@ -257,6 +257,103 @@ func (s *Server) viewProjects(c echo.Context) error {
 	return c.Render(http.StatusOK, "projectview.html", data)
 }
 
+// sessionCard is the project-detail view model for one session, rendered as a
+// card with a short prompt preview.
+type sessionCard struct {
+	ID      string
+	Created string
+	Prompt  string
+	Status  string
+	CostUSD float64
+}
+
+// configKV is a single key/value row in the project's configuration table.
+type configKV struct {
+	Key   string
+	Value string
+}
+
+// firstPromptPreview returns a trimmed, length-capped preview of a session's
+// first user prompt, or a placeholder when the session has none yet.
+func (s *Server) firstPromptPreview(ctx context.Context, sessionID string) string {
+	prompts, err := s.store.GetPromptTexts(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	for _, p := range prompts {
+		if t := strings.TrimSpace(p); t != "" {
+			const max = 200
+			if len(t) > max {
+				t = t[:max] + "…"
+			}
+			return t
+		}
+	}
+	return ""
+}
+
+// viewProjectDetail renders a project's overview page: its configuration plus
+// its sessions grouped into active (running/pending) and closed cards. It is
+// reached by clicking a project's name in the session view.
+func (s *Server) viewProjectDetail(c echo.Context) error {
+	ctx := c.Request().Context()
+	name := c.Param("name")
+
+	sessions, err := s.store.ListSessionsByProject(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	var active, closed []sessionCard
+	for _, sess := range sessions {
+		card := sessionCard{
+			ID:      sess.ID,
+			Created: sess.CreatedAt.Format("Jan 2 15:04"),
+			Prompt:  s.firstPromptPreview(ctx, sess.ID),
+			Status:  sess.Status,
+			CostUSD: sess.CostUSD,
+		}
+		if sess.Status == "running" || sess.Status == "pending" {
+			active = append(active, card)
+		} else {
+			closed = append(closed, card)
+		}
+	}
+
+	// Configuration table: only populated when a ProjectStore is configured.
+	// Blank fields are skipped so the table shows only what is actually set.
+	var cfg []configKV
+	if s.projects != nil {
+		p, err := s.projects.GetProject(ctx, name)
+		if err != nil {
+			return err
+		}
+		add := func(k, v string) {
+			if strings.TrimSpace(v) != "" {
+				cfg = append(cfg, configKV{Key: k, Value: v})
+			}
+		}
+		add("dir", p.Dir)
+		add("agent", p.Agent)
+		add("sandbox", p.Sandbox)
+		add("sandbox_profiles", p.SandboxProfiles)
+		add("permission", p.Permission)
+		add("repo", p.Repo)
+		add("hooks", p.Hooks)
+		if len(p.Env) > 0 {
+			add("env", strings.Join(p.Env, "\n"))
+		}
+	}
+
+	return c.Render(http.StatusOK, "projectdetail.html", map[string]interface{}{
+		"CurrentPage":    "projects",
+		"ProjectName":    name,
+		"Config":         cfg,
+		"ActiveSessions": active,
+		"ClosedSessions": closed,
+	})
+}
+
 func (s *Server) createProjectSession(c echo.Context) error {
 	if s.creator == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session creation not available"})

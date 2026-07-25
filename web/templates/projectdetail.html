@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.ProjectName}} — Project</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif; margin: 0; padding: 0; background: #fafaf9; color: #1c1917; }
+  a { color: #2563eb; text-decoration: none; transition: color 0.15s; }
+  a:hover { color: #1d4ed8; text-decoration: underline; }
+
+  header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 0 2em; position: sticky; top: 0; z-index: 10; }
+  .header-inner { max-width: none; margin: 0 auto; display: flex; align-items: center; gap: 2em; height: 3.25em; }
+  .brand { font-weight: 700; font-size: 1em; color: #1c1917; letter-spacing: -0.025em; }
+  .nav-links { display: flex; gap: 0.25em; }
+  .nav-link { padding: 0.375em 0.75em; border-radius: 6px; font-size: 0.8125em; font-weight: 500; color: #78716c; text-decoration: none; transition: background 0.15s, color 0.15s; }
+  .nav-link:hover { background: #f5f5f4; color: #1c1917; text-decoration: none; }
+  .nav-link.active { background: #eff6ff; color: #2563eb; font-weight: 600; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 1.5em 2em 2em; }
+  .back-link { display: inline-block; color: #78716c; font-size: 0.8125em; margin-bottom: 1.25em; }
+  h1 { font-size: 1.75em; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 0.25em; }
+  .subtitle { color: #78716c; font-size: 0.875em; margin: 0 0 1.5em; }
+  h2 { font-size: 1.15em; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 0.875em; }
+
+  .card { background: #fff; padding: 1.25em 1.5em; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 6px 18px rgba(16,24,40,0.07); margin-bottom: 2em; }
+  .card-label { font-size: 0.75em; font-weight: 600; color: #78716c; text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.75em; }
+  .cfg-table { width: 100%; border-collapse: collapse; }
+  .cfg-table td { padding: 0.5em 0.75em; border-bottom: 1px solid #f5f5f4; font-size: 0.8125em; word-break: break-word; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .cfg-table tr:last-child td { border-bottom: none; }
+  .cfg-table td.k { vertical-align: top; font-weight: 600; color: #78716c; width: 14em; font-size: 0.75em; }
+  .cfg-table td.v { white-space: pre-wrap; }
+
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1em; margin-bottom: 2.25em; }
+  .scard { background: #fff; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 6px 18px rgba(16,24,40,0.07); display: flex; flex-direction: column; overflow: hidden; }
+  .scard-body { padding: 1em 1.125em; flex: 1; }
+  .scard-created { font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #a8a29e; margin-bottom: 0.375em; }
+  .scard-prompt { font-size: 0.875em; line-height: 1.55; color: #1c1917; }
+  .scard-prompt.empty { color: #a8a29e; font-style: italic; }
+  .scard-foot { display: flex; align-items: center; gap: 0.625em; padding: 0.625em 1.125em; background: #fafaf9; border-top: 1px solid #f5f5f4; }
+  .scard-foot .spacer { flex: 1; }
+  .scard-open { font-size: 0.75em; font-weight: 600; }
+  .scard-cost { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; font-weight: 700; color: #4f46e5; }
+
+  .status-pill { display: inline-block; padding: 0.2em 0.625em; border-radius: 9999px; font-size: 0.6875em; font-weight: 600; text-transform: lowercase; }
+  .status-pill.status-running { background: #dcfce7; color: #166534; }
+  .status-pill.status-pending { background: #fef9c3; color: #854d0e; }
+  .status-pill.status-error { background: #fee2e2; color: #991b1b; }
+  .status-pill.status-complete, .status-pill.status-stopped { background: #e7e5e4; color: #57534e; }
+
+  .empty-note { color: #a8a29e; font-size: 0.875em; margin: 0 0 2em; }
+
+  @media (max-width: 768px) {
+    header { padding: 0 1em; }
+    main { padding: 1em 1em 1.5em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <span class="brand">ACPP</span>
+    <nav class="nav-links">
+      <a href="/projects" class="nav-link{{if eq .CurrentPage "projects"}} active{{end}}">Workplace</a>
+      <a href="/sessions" class="nav-link{{if eq .CurrentPage "sessions"}} active{{end}}">Sessions</a>
+      <a href="/stats" class="nav-link{{if eq .CurrentPage "stats"}} active{{end}}">Stats</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <a href="/projects?project={{.ProjectName}}" class="back-link">&larr; Back to session</a>
+
+  <h1>{{.ProjectName}}</h1>
+  <p class="subtitle">Project overview &amp; configuration</p>
+
+  {{if .Config}}
+  <div class="card">
+    <div class="card-label">Configuration</div>
+    <table class="cfg-table">
+      <tbody>
+        {{range .Config}}
+        <tr>
+          <td class="k">{{.Key}}</td>
+          <td class="v">{{.Value}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <h2>Active Sessions</h2>
+  {{if .ActiveSessions}}
+  <div class="card-grid" id="active-grid">
+    {{range .ActiveSessions}}
+    <div class="scard">
+      <div class="scard-body">
+        <div class="scard-created">{{.Created}}</div>
+        <div class="scard-prompt{{if not .Prompt}} empty{{end}}">{{if .Prompt}}{{.Prompt}}{{else}}(no prompt yet){{end}}</div>
+      </div>
+      <div class="scard-foot">
+        <span class="status-pill status-{{.Status}}">{{.Status}}</span>
+        <span class="scard-cost">${{printf "%.4f" .CostUSD}}</span>
+        <div class="spacer"></div>
+        <a href="/projects?project={{$.ProjectName}}&session={{.ID}}" class="scard-open">Open &rarr;</a>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty-note">No active sessions.</p>
+  {{end}}
+
+  <h2>Closed Sessions</h2>
+  {{if .ClosedSessions}}
+  <div class="card-grid" id="closed-grid">
+    {{range .ClosedSessions}}
+    <div class="scard">
+      <div class="scard-body">
+        <div class="scard-created">{{.Created}}</div>
+        <div class="scard-prompt{{if not .Prompt}} empty{{end}}">{{if .Prompt}}{{.Prompt}}{{else}}(no prompt){{end}}</div>
+      </div>
+      <div class="scard-foot">
+        <span class="status-pill status-{{.Status}}">{{.Status}}</span>
+        <span class="scard-cost">${{printf "%.4f" .CostUSD}}</span>
+        <div class="spacer"></div>
+        <a href="/projects?project={{$.ProjectName}}&session={{.ID}}" class="scard-open">Open &rarr;</a>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty-note">No closed sessions.</p>
+  {{end}}
+</main>
+</body>
+</html>
