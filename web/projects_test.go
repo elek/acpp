@@ -160,6 +160,52 @@ func TestCreateProjectNoStore(t *testing.T) {
 	}
 }
 
+func TestViewProjectsRendersSessionInfoPanel(t *testing.T) {
+	store := seedStore(t)
+	s := New(store, ":0").WithProjects(store)
+
+	rec := doGet(t, s, "/projects?project=acpp&session=s2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The info toggle button and the side panel are both rendered when a
+	// session is active.
+	if !strings.Contains(body, `id="info-btn"`) {
+		t.Errorf("session info toggle button not rendered")
+	}
+	if !strings.Contains(body, `id="session-info"`) {
+		t.Errorf("session info side panel not rendered")
+	}
+	if !strings.Contains(body, "Session Info") {
+		t.Errorf("session info title not rendered")
+	}
+	// Context window: used = 100000 + 3800 = 103800 of 200000 (claude) => 51%.
+	if !strings.Contains(body, "103.8K / 200K") {
+		t.Errorf("context window count not rendered:\n%s", body)
+	}
+	if !strings.Contains(body, "51% used") {
+		t.Errorf("context window percent not rendered")
+	}
+	if !strings.Contains(body, "claude-sonnet-4.6") {
+		t.Errorf("model not rendered in info panel")
+	}
+}
+
+func TestViewProjectsNoSessionInfoWithoutSession(t *testing.T) {
+	store := db.NewMemStore()
+	s := New(store, ":0").WithProjects(store)
+
+	rec := doGet(t, s, "/projects")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `id="session-info"`) {
+		t.Errorf("session info panel should not render without an active session")
+	}
+}
+
 func TestViewTaskbarFragment(t *testing.T) {
 	store := seedStore(t)
 	s := New(store, ":0").WithProjects(store)

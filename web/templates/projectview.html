@@ -68,9 +68,33 @@
   .new-btn { display: inline-flex; align-items: center; gap: 0.375em; background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 0.3em 0.75em; border-radius: 8px; font-size: 0.75em; font-weight: 600; cursor: pointer; transition: background 0.15s; }
   .new-btn:hover { background: #e0e7ff; }
   .stop-btn svg, .new-btn svg { flex-shrink: 0; }
+  .info-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.85em; height: 1.85em; border: none; border-radius: 8px; background: #f5f5f4; color: #78716c; cursor: pointer; transition: background 0.15s, color 0.15s; }
+  .info-btn:hover { background: #e7e5e4; color: #1c1917; }
+  .info-btn.active { background: #eef2ff; color: #4f46e5; }
+  .info-btn svg { flex-shrink: 0; }
 
   /* Conversation area */
-  .conversation-area { flex: 1; overflow-y: auto; padding: 1.5em 2em 2em; }
+  .conversation-wrap { flex: 1; display: flex; min-height: 0; }
+  .conversation-area { flex: 1; overflow-y: auto; padding: 1.5em 2em 2em; min-width: 0; }
+
+  /* Session info side panel */
+  .session-info { width: 300px; flex-shrink: 0; background: #fff; box-shadow: -2px 0 8px rgba(16,24,40,0.07); overflow-y: auto; padding: 1.25em; }
+  .session-info-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1em; }
+  .session-info-title { font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; }
+  .session-info-close { display: inline-flex; align-items: center; justify-content: center; width: 1.75em; height: 1.75em; border: none; border-radius: 8px; background: #f5f5f4; color: #78716c; cursor: pointer; transition: background 0.15s, color 0.15s; }
+  .session-info-close:hover { background: #e7e5e4; color: #1c1917; }
+  .info-row { padding: 0.625em 0; border-bottom: 1px solid #f5f5f4; }
+  .info-row-label { font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #a8a29e; margin-bottom: 0.25em; }
+  .info-row-value { font-size: 0.8125em; color: #1c1917; word-break: break-word; }
+  .info-row-value .session-status { font-size: 0.75em; padding: 0.15em 0.55em; }
+  .info-cost { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.875em; font-weight: 700; color: #4f46e5; }
+  .info-ctx { padding: 0.875em 0 0; }
+  .info-ctx-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.375em; }
+  .info-ctx-label { font-size: 0.6875em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #a8a29e; }
+  .info-ctx-count { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; color: #57534e; }
+  .info-ctx-track { height: 8px; border-radius: 999px; background: #f5f5f4; overflow: hidden; }
+  .info-ctx-fill { height: 100%; border-radius: 999px; background: #4f46e5; transition: width 0.3s; }
+  .info-ctx-pct { font-size: 0.6875em; color: #a8a29e; margin-top: 0.375em; }
 
   .msg { margin-bottom: 1em; padding: 0.875em 1.25em; border-radius: 6px; }
   .msg-user { background: #eff6ff; border-left: 3px solid #3b82f6; }
@@ -200,6 +224,9 @@
     {{if .ActiveProject}}
     <div class="session-bar">
       <a href="/project/{{.ActiveProject}}" class="project-title" title="Open project overview">{{.ActiveProject}}</a>
+      {{if .ActiveSession}}
+      <button type="button" class="info-btn" id="info-btn" title="Session info" aria-label="Session info"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></button>
+      {{end}}
       {{if .Sessions}}
       <select id="session-select">
         {{range .Sessions}}
@@ -225,6 +252,7 @@
       <button type="button" class="new-btn" id="new-conversation-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg><span class="btn-label">new</span></button>
       {{end}}
     </div>
+    <div class="conversation-wrap">
     <div class="conversation-area" id="conversation">
       {{if .ActiveSession}}
       <p class="loading">Loading events...</p>
@@ -272,6 +300,39 @@
         </tbody>
       </table>
       </div>
+    </div>
+    {{if .ActiveSession}}
+    <aside class="session-info" id="session-info" style="display:none">
+      <div class="session-info-head">
+        <span class="session-info-title">Session Info</span>
+        <button type="button" class="session-info-close" id="info-close" title="Close" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+      </div>
+      <div class="info-row">
+        <div class="info-row-label">Used ACP</div>
+        <div class="info-row-value">{{.ActiveSession.Agent}}{{if .ActiveSession.SDKVersion}} &middot; {{.ActiveSession.SDKVersion}}{{end}}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-row-label">Status</div>
+        <div class="info-row-value"><span class="session-status status-{{.ActiveSession.Status}}" id="info-status">{{.ActiveSession.Status}}</span></div>
+      </div>
+      <div class="info-row">
+        <div class="info-row-label">Cost</div>
+        <div class="info-row-value info-cost">${{printf "%.4f" .ActiveSession.CostUSD}}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-row-label">Model</div>
+        <div class="info-row-value">{{if .ActiveSession.Model}}{{.ActiveSession.Model}}{{else}}&mdash;{{end}}</div>
+      </div>
+      <div class="info-ctx">
+        <div class="info-ctx-head">
+          <span class="info-ctx-label">Context Window</span>
+          <span class="info-ctx-count">{{humanTokens .ContextUsed}} / {{humanTokens .ContextWindow}}</span>
+        </div>
+        <div class="info-ctx-track"><div class="info-ctx-fill" style="width: {{.ContextPct}}%"></div></div>
+        <div class="info-ctx-pct">{{.ContextPct}}% used</div>
+      </div>
+    </aside>
+    {{end}}
     </div>
     <div class="prompt-bar" id="prompt-bar">
       <div id="prompt-attachments" class="prompt-attachments"></div>
@@ -356,6 +417,32 @@
     if (metaLink) metaLink.classList.add("active");
     var promptBar = document.querySelector(".prompt-bar");
     if (promptBar) promptBar.style.display = "none";
+  }
+
+  // Session info side panel toggle (persisted across navigations).
+  var infoBtn = document.getElementById("info-btn");
+  var infoPanel = document.getElementById("session-info");
+  var infoClose = document.getElementById("info-close");
+  function setInfoOpen(open) {
+    if (!infoPanel || !infoBtn) return;
+    infoPanel.style.display = open ? "" : "none";
+    infoBtn.classList.toggle("active", open);
+    try { localStorage.setItem("acpp.sessionInfoOpen", open ? "1" : "0"); } catch (e) {}
+  }
+  if (infoBtn && infoPanel) {
+    var infoOpen = false;
+    try { infoOpen = localStorage.getItem("acpp.sessionInfoOpen") === "1"; } catch (e) {}
+    setInfoOpen(infoOpen);
+    infoBtn.addEventListener("click", function() {
+      setInfoOpen(infoPanel.style.display === "none");
+    });
+    if (infoClose) infoClose.addEventListener("click", function() { setInfoOpen(false); });
+  }
+  function updateInfoStatus(status, cls) {
+    var el = document.getElementById("info-status");
+    if (!el) return;
+    el.textContent = status;
+    el.className = "session-status " + cls;
   }
 
   // Emoji maps
@@ -993,6 +1080,7 @@
             statusEl.className = 'session-status status-running';
             statusEl.textContent = 'running';
           }
+          updateInfoStatus('running', 'status-running');
           var fullViewLink = document.querySelector('.session-bar .session-link');
           if (fullViewLink) fullViewLink.href = '/projects?project=' + encodeURIComponent(activeProject) + '&session=' + encodeURIComponent(sessionId) + '&view=meta';
 
@@ -1074,6 +1162,7 @@
           statusEl.className = 'session-status status-running';
           statusEl.textContent = 'running';
         }
+        updateInfoStatus('running', 'status-running');
         if (sessionSelect) {
           var opt = document.createElement('option');
           opt.value = sessionId;
@@ -1120,6 +1209,7 @@
             statusEl.className = 'session-status status-complete';
             statusEl.textContent = 'stopped';
           }
+          updateInfoStatus('stopped', 'status-complete');
           updatePromptBarMode();
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);

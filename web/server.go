@@ -124,6 +124,19 @@ func New(store db.SessionReader, addr string) *Server {
 			}
 			return fmt.Sprintf("%d", v)
 		},
+		"humanTokens": func(v int64) string {
+			switch {
+			case v >= 1_000_000:
+				return fmt.Sprintf("%.1fM", float64(v)/1_000_000)
+			case v >= 1_000:
+				if v%1000 == 0 {
+					return fmt.Sprintf("%dK", v/1000)
+				}
+				return fmt.Sprintf("%.1fK", float64(v)/1_000)
+			default:
+				return fmt.Sprintf("%d", v)
+			}
+		},
 	}).ParseFS(templateFS, "templates/*.html")
 	e.Renderer = &tmplRenderer{templates: t}
 
