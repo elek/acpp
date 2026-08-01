@@ -183,6 +183,10 @@ func TestEmbeddedNvidiaProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, fragments, "nvidia", "embedded nvidia profile must be present")
 	require.NotEmpty(t, fragments["nvidia"].DevBind, "nvidia profile must dev-bind device nodes")
+	// /sys is required for NVML to enumerate the GPU; without it nvidia-smi
+	// fails with "GPU access blocked by the operating system".
+	require.Contains(t, fragments["nvidia"].ROBind, "/sys",
+		"nvidia profile must ro-bind /sys for NVML to reach sysfs")
 }
 
 func TestLoadBwrapConfig(t *testing.T) {

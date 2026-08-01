@@ -60,7 +60,14 @@ docker:
 # listed node is missing. Override in ~/.config/acpp/bbwrap.yaml to add more
 # GPUs (/dev/nvidia1, ...) or /dev/nvidia-modeset for graphics workloads.
 # The userspace libraries (/usr/lib) and nvidia-smi (/usr/bin) come from base.
+#
+# /sys is required: NVML enumerates and validates the GPU through sysfs, so
+# without it nvidia-smi fails with "GPU access blocked by the operating system"
+# even though every /dev/nvidia* node is bound. (Also requires bwrap to run
+# without a user namespace the driver rejects; use a setuid bwrap.)
 nvidia:
+  ro-bind:
+    - /sys
   dev-bind:
     - /dev/nvidiactl
     - /dev/nvidia-uvm
