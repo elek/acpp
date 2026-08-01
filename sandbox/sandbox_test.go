@@ -114,6 +114,77 @@ func hasBind(args []string, src, dest string) bool {
 	return false
 }
 
+// hasDevBind reports whether args contains the sequence --dev-bind src dest.
+func hasDevBind(args []string, src, dest string) bool {
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == "--dev-bind" && args[i+1] == src && args[i+2] == dest {
+			return true
+		}
+	}
+	return false
+}
+
+func TestResolveFragmentDevBind(t *testing.T) {
+	fragments := map[string]*BwrapConfig{
+		"gpu": {
+			DevBind: []string{"/dev/nvidia0", "/dev/nvidiactl"},
+		},
+	}
+	resolved, err := resolveFragment("gpu", fragments, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"/dev/nvidia0", "/dev/nvidiactl"}, resolved.devBind)
+}
+
+func TestBwrapSandboxDevBind(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(`
+sandbox:
+  ro-bind:
+    - /bin
+gpu:
+  dev-bind:
+    - /dev/foo:/dev/bar
+    - /dev/baz
+`), 0o644)
+	require.NoError(t, err)
+
+	fragments, err := loadFragments(configPath)
+	require.NoError(t, err)
+	sb, err := NewBwrapSandbox("sandbox", []string{"gpu"}, "/tmp", fragments)
+	require.NoError(t, err)
+
+	_, args := sb.Wrap("agent", nil)
+
+	// The remapped dev-bind appears as "--dev-bind /dev/foo /dev/bar".
+	require.True(t, hasDevBind(args, "/dev/foo", "/dev/bar"),
+		"expected remapped dev-bind in %v", args)
+	// The same-path dev-bind appears as "--dev-bind /dev/baz /dev/baz".
+	require.True(t, hasDevBind(args, "/dev/baz", "/dev/baz"),
+		"expected same-path dev-bind in %v", args)
+
+	// dev-binds must be emitted after the static "--dev /dev" so they layer on
+	// top of the fresh devtmpfs rather than being clobbered by it.
+	devIdx, devBindIdx := -1, -1
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--dev" && args[i+1] == "/dev" {
+			devIdx = i
+		}
+		if args[i] == "--dev-bind" && args[i+1] == "/dev/baz" {
+			devBindIdx = i
+		}
+	}
+	require.Greater(t, devIdx, -1, "expected --dev /dev in %v", args)
+	require.Greater(t, devBindIdx, devIdx, "dev-bind must come after --dev /dev")
+}
+
+func TestEmbeddedNvidiaProfile(t *testing.T) {
+	fragments, err := loadFragments()
+	require.NoError(t, err)
+	require.Contains(t, fragments, "nvidia", "embedded nvidia profile must be present")
+	require.NotEmpty(t, fragments["nvidia"].DevBind, "nvidia profile must dev-bind device nodes")
+}
+
 func TestLoadBwrapConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

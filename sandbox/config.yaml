@@ -54,3 +54,15 @@ docker:
   bind:
     - /var/lib/docker
     - /var/run/docker.sock
+
+# NVIDIA GPU passthrough. Opt in with --profiles nvidia. Requires the host
+# NVIDIA driver plus the listed device nodes to exist; bwrap errors if any
+# listed node is missing. Override in ~/.config/acpp/bbwrap.yaml to add more
+# GPUs (/dev/nvidia1, ...) or /dev/nvidia-modeset for graphics workloads.
+# The userspace libraries (/usr/lib) and nvidia-smi (/usr/bin) come from base.
+nvidia:
+  dev-bind:
+    - /dev/nvidiactl
+    - /dev/nvidia-uvm
+    - /dev/nvidia-uvm-tools
+    - /dev/nvidia0
