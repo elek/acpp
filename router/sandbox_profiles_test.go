@@ -55,6 +55,20 @@ func TestProjectProfilesApplied(t *testing.T) {
 		require.Equal(t, "docker", opts.SandboxProfiles)
 	})
 
+	t.Run("from project .acpp.yaml with profiles but no name", func(t *testing.T) {
+		dir := t.TempDir()
+		// The reported scenario: a project file that sets only `profiles`,
+		// relying on the caller/default for the sandbox type.
+		writeProjectFile(t, dir, "sandbox:\n  profiles: docker\n")
+
+		opts := types.SessionOpts{CWD: dir, SandboxType: "bbwrap"}
+		line := wrapArgs(t, &opts)
+
+		require.Contains(t, line, "docker.sock",
+			"a profiles-only .acpp.yaml must still reach the session sandbox")
+		require.Equal(t, "docker", opts.SandboxProfiles)
+	})
+
 	t.Run("from caller profiles, no project sandbox block", func(t *testing.T) {
 		dir := t.TempDir() // no .acpp.yaml
 

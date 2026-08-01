@@ -353,12 +353,17 @@ func (r *Router) resolveProject(opts *types.SessionOpts) (hooks []hook.Hook, sbT
 	// Sandbox settings: project file > caller's type/profiles > config default.
 	// Only meaningful when the caller has not pre-built a Sandbox (resolveSandbox
 	// honors that). Channels pass the sandbox as strings and leave Sandbox nil so
-	// this is the single place .acpp.yaml is folded in.
+	// this is the single place .acpp.yaml is folded in. Type and profiles resolve
+	// independently: a project may set `profiles` (e.g. docker) without declaring
+	// a `name`, in which case the type still falls back to the caller/default.
 	sbType, profiles = opts.SandboxType, opts.SandboxProfiles
 	if pc.Sandbox.Name != "" {
-		sbType, profiles = pc.Sandbox.Name, pc.Sandbox.Profiles
+		sbType = pc.Sandbox.Name
 	} else if sbType == "" {
 		sbType = r.cfg.Defaults.Sandbox
+	}
+	if pc.Sandbox.Profiles != "" {
+		profiles = pc.Sandbox.Profiles
 	}
 
 	// Hooks: global config hooks run first, then the project's own. Building both
