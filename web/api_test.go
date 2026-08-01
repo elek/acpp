@@ -68,8 +68,12 @@ func seedStore(t *testing.T) *db.MemStore {
 		t.Fatal(err)
 	}
 	info := acplib.StatusInfo{Status: acplib.StatusComplete, Model: "claude-sonnet-4.6"}
+	// Cumulative lifetime counters (grow across turns; NOT the context occupancy).
 	info.Usage.InputTokens = 100000
 	info.Usage.CacheReadInputTokens = 3800
+	// Authoritative context occupancy reported by the agent's usage_update.
+	info.Usage.ContextUsed = 120000
+	info.Usage.ContextWindow = 200000
 	info.Usage.CostUSD = 1.27
 	if err := store.FinishSession(ctx, "s2", info, ""); err != nil {
 		t.Fatal(err)
@@ -207,8 +211,11 @@ func TestAPISessions(t *testing.T) {
 	if got := byID["s2"].Title; got != "Add /help command" {
 		t.Errorf("s2 title = %q, want %q", got, "Add /help command")
 	}
-	if got := byID["s2"].ContextUsed; got != 103800 {
-		t.Errorf("s2 context_used = %d, want 103800", got)
+	if got := byID["s2"].ContextUsed; got != 120000 {
+		t.Errorf("s2 context_used = %d, want 120000 (authoritative, not the cumulative-token sum)", got)
+	}
+	if got := byID["s2"].ContextWindow; got != 200000 {
+		t.Errorf("s2 context_window = %d, want 200000", got)
 	}
 	if byID["s2"].CostUSD == nil || *byID["s2"].CostUSD != 1.27 {
 		t.Errorf("s2 cost_usd = %v, want 1.27", byID["s2"].CostUSD)
@@ -235,6 +242,89 @@ func TestAPISession(t *testing.T) {
 	}
 	if sess.Status != "done" {
 		t.Errorf("status = %q, want done", sess.Status)
+	}
+}
+
+// TestSessionContextPrefersAuthoritativeUsage proves the fix for the "used >
+// window" bug: the panel must report the agent's authoritative context
+// occupancy (usage_update), never the ever-growing cumulative token counters
+// (input + cache_creation + cache_read), which re-count the cached prefix every
+// turn and sail past the real window.
+func TestSessionContextPrefersAuthoritativeUsage(t *testing.T) {
+	store := db.NewMemStore()
+	ctx := context.Background()
+	dir := "/tmp/does-not-exist/acpp"
+	if err := store.SetProjectField(ctx, "acpp", "dir", dir); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := store.InsertSession(ctx, "big", "web", "claude", dir, "", "", "", "acpp", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	info := acplib.StatusInfo{Status: acplib.StatusRunning, Model: "claude-opus-4-8"}
+	// Cumulative counters that would sum to 362.3K — far past the 200K window.
+	info.Usage.InputTokens = 300300
+	info.Usage.CacheReadInputTokens = 62000
+	// Authoritative occupancy from usage_update.
+	info.Usage.ContextUsed = 150000
+	info.Usage.ContextWindow = 200000
+	if err := store.UpdateSession(ctx, "big", info); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store, ":0").WithProjects(store)
+	rec := doGet(t, s, "/api/session/big")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var sess SessionJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if sess.ContextUsed != 150000 {
+		t.Errorf("context_used = %d, want 150000 (authoritative, not the 362300 cumulative sum)", sess.ContextUsed)
+	}
+	if sess.ContextWindow != 200000 {
+		t.Errorf("context_window = %d, want 200000", sess.ContextWindow)
+	}
+}
+
+// TestSessionContextFallsBackWhenNoUsageUpdate covers agents that never emit a
+// usage_update: occupancy is unknown (0, not the misleading cumulative sum) and
+// the window falls back to the per-model lookup.
+func TestSessionContextFallsBackWhenNoUsageUpdate(t *testing.T) {
+	store := db.NewMemStore()
+	ctx := context.Background()
+	dir := "/tmp/does-not-exist/acpp"
+	if err := store.SetProjectField(ctx, "acpp", "dir", dir); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := store.InsertSession(ctx, "old", "web", "claude", dir, "", "", "", "acpp", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	info := acplib.StatusInfo{Status: acplib.StatusRunning, Model: "claude-sonnet-4.6"}
+	info.Usage.InputTokens = 90000
+	info.Usage.CacheReadInputTokens = 5000
+	// No ContextUsed/ContextWindow — this agent didn't report a usage_update.
+	if err := store.UpdateSession(ctx, "old", info); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store, ":0").WithProjects(store)
+	rec := doGet(t, s, "/api/session/old")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var sess SessionJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if sess.ContextUsed != 0 {
+		t.Errorf("context_used = %d, want 0 (occupancy unknown)", sess.ContextUsed)
+	}
+	if sess.ContextWindow != 200000 {
+		t.Errorf("context_window = %d, want 200000 (per-model fallback)", sess.ContextWindow)
 	}
 }
 

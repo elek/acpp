@@ -44,6 +44,7 @@ func (s *PostgresStore) ListSessionsByDir(ctx context.Context, dir string) ([]Se
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
 		WHERE dir = $1
@@ -60,6 +61,7 @@ func (s *PostgresStore) ListSessionsByDir(ctx context.Context, dir string) ([]Se
 			&r.ID, &r.SourceName, &r.Agent, &r.Dir, &r.Sandbox, &r.Node, &r.GitCommit, &r.ProjectName, &r.Env,
 			&r.Status, &r.ErrorMsg, &r.Model, &r.SDKVersion, &r.PID,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+			&r.ContextUsed, &r.ContextWindow,
 			&r.CostUSD, &r.PromptCount, &r.PromptDurationMs, &r.CreatedAt, &r.FinishedAt,
 		); err != nil {
 			return nil, errors.Wrap(err, "scanning session row")
@@ -74,6 +76,7 @@ func (s *PostgresStore) ListSessionsByProject(ctx context.Context, projectName s
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
 		WHERE project_name = $1
@@ -90,6 +93,7 @@ func (s *PostgresStore) ListSessionsByProject(ctx context.Context, projectName s
 			&r.ID, &r.SourceName, &r.Agent, &r.Dir, &r.Sandbox, &r.Node, &r.GitCommit, &r.ProjectName, &r.Env,
 			&r.Status, &r.ErrorMsg, &r.Model, &r.SDKVersion, &r.PID,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+			&r.ContextUsed, &r.ContextWindow,
 			&r.CostUSD, &r.PromptCount, &r.PromptDurationMs, &r.CreatedAt, &r.FinishedAt,
 		); err != nil {
 			return nil, errors.Wrap(err, "scanning session row")

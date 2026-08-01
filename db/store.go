@@ -147,7 +147,9 @@ func (s *PostgresStore) UpdateSession(ctx context.Context, id string, info acpli
 			cache_creation_input_tokens = $8,
 			cache_read_input_tokens = $9,
 			cost_usd = $10,
-			prompt_count = $11
+			prompt_count = $11,
+			context_used = $12,
+			context_window = $13
 		WHERE id = $1`,
 		id,
 		string(info.Status),
@@ -160,6 +162,8 @@ func (s *PostgresStore) UpdateSession(ctx context.Context, id string, info acpli
 		info.Usage.CacheReadInputTokens,
 		info.Usage.CostUSD,
 		info.Usage.PromptCount,
+		info.Usage.ContextUsed,
+		info.Usage.ContextWindow,
 	)
 	return errors.Wrap(err, "updating session")
 }
@@ -179,6 +183,8 @@ func (s *PostgresStore) FinishSession(ctx context.Context, id string, info acpli
 			cache_read_input_tokens = $10,
 			cost_usd = $11,
 			prompt_count = $12,
+			context_used = $13,
+			context_window = $14,
 			finished_at = now()
 		WHERE id = $1`,
 		id,
@@ -193,6 +199,8 @@ func (s *PostgresStore) FinishSession(ctx context.Context, id string, info acpli
 		info.Usage.CacheReadInputTokens,
 		info.Usage.CostUSD,
 		info.Usage.PromptCount,
+		info.Usage.ContextUsed,
+		info.Usage.ContextWindow,
 	)
 	return errors.Wrap(err, "finishing session")
 }
@@ -236,6 +244,8 @@ type SessionRow struct {
 	OutputTokens             int64
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
+	ContextUsed              int64
+	ContextWindow            int64
 	CostUSD                  float64
 	PromptCount              int64
 	PromptDurationMs         int64
@@ -257,6 +267,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]SessionRow, error) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
 		ORDER BY created_at DESC`)
@@ -272,6 +283,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]SessionRow, error) 
 			&r.ID, &r.SourceName, &r.Agent, &r.Dir, &r.Sandbox, &r.Node, &r.GitCommit, &r.ProjectName, &r.Env,
 			&r.Status, &r.ErrorMsg, &r.Model, &r.SDKVersion, &r.PID,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+			&r.ContextUsed, &r.ContextWindow,
 			&r.CostUSD, &r.PromptCount, &r.PromptDurationMs, &r.CreatedAt, &r.FinishedAt,
 		); err != nil {
 			return nil, errors.Wrap(err, "scanning session row")
@@ -287,6 +299,7 @@ func (s *PostgresStore) GetSession(ctx context.Context, id string) (SessionRow, 
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
 		WHERE id = $1`, id).Scan(
@@ -367,6 +380,7 @@ func (s *PostgresStore) GetSessionsByCommit(ctx context.Context, commit string) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
 		WHERE git_commit LIKE $1 || '%'
@@ -383,6 +397,7 @@ func (s *PostgresStore) GetSessionsByCommit(ctx context.Context, commit string) 
 			&r.ID, &r.SourceName, &r.Agent, &r.Dir, &r.Sandbox, &r.Node, &r.GitCommit, &r.ProjectName, &r.Env,
 			&r.Status, &r.ErrorMsg, &r.Model, &r.SDKVersion, &r.PID,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+			&r.ContextUsed, &r.ContextWindow,
 			&r.CostUSD, &r.PromptCount, &r.PromptDurationMs, &r.CreatedAt, &r.FinishedAt,
 		); err != nil {
 			return nil, errors.Wrap(err, "scanning session row")

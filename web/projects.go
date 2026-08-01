@@ -248,8 +248,8 @@ func (s *Server) viewProjects(c echo.Context) error {
 			for _, sess := range sessions {
 				if sess.ID == activeSessionID {
 					data["ActiveSession"] = &sess
-					used := sess.InputTokens + sess.CacheCreationInputTokens + sess.CacheReadInputTokens
-					window := contextWindowForModel(sess.Model)
+					used := contextUsed(sess)
+					window := contextWindow(sess)
 					pct := 0
 					if window > 0 {
 						pct = int(used * 100 / window)

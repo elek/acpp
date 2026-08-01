@@ -123,7 +123,7 @@ func TestPersister_AccumulatesPromptDuration(t *testing.T) {
 		meta,
 		acp.NewSessionResponse{SessionId: meta.SessionID},
 		acp.PromptRequest{SessionId: meta.SessionID}, // now() -> 1001s (start)
-		acp.PromptResponse{},                          // now() -> 1002s (end) => 1000ms
+		acp.PromptResponse{},                         // now() -> 1002s (end) => 1000ms
 	)
 
 	if row.PromptDurationMs != 1000 {
@@ -216,6 +216,60 @@ func TestPersister_StillbornErrorFlow(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected an agent_message_chunk log carrying the error message")
+	}
+}
+
+// TestPersister_PersistsContextWindowUsage verifies the authoritative context
+// occupancy from a usage_update is persisted onto the row — and that it survives
+// the whole-Usage replacement that a subsequent modelUsage-carrying chunk and
+// prompt response perform (which would otherwise wipe ContextUsed back to zero).
+func TestPersister_PersistsContextWindowUsage(t *testing.T) {
+	store := db.NewMemStore()
+	p := New(router.New(), store)
+
+	meta := types.ConversationMeta{ConversationID: "conv-ctx", SessionID: acp.SessionId("sess-ctx")}
+
+	usage := acp.SessionNotification{
+		SessionId: meta.SessionID,
+		Update: acp.SessionUpdate{
+			UsageUpdate: &acp.SessionUsageUpdate{Size: 200000, Used: 150000},
+		},
+	}
+	// A chunk carrying cumulative modelUsage arrives AFTER the usage_update and
+	// replaces the whole Usage struct in memory.
+	chunk := acp.SessionNotification{
+		SessionId: meta.SessionID,
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Meta: map[string]any{
+					"claudeCode": map[string]any{
+						"model": "claude-opus-4-8",
+						"modelUsage": map[string]any{
+							"claude-opus-4-8": map[string]any{
+								"inputTokens":          float64(300300),
+								"cacheReadInputTokens": float64(62000),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	row := feed(t, p, store,
+		meta,
+		acp.NewSessionResponse{SessionId: meta.SessionID},
+		acp.PromptRequest{SessionId: meta.SessionID},
+		usage,
+		chunk,
+		acp.PromptResponse{StopReason: acp.StopReason("end_turn")},
+	)
+
+	if row.ContextUsed != 150000 {
+		t.Errorf("ContextUsed = %d, want 150000 (authoritative occupancy)", row.ContextUsed)
+	}
+	if row.ContextWindow != 200000 {
+		t.Errorf("ContextWindow = %d, want 200000", row.ContextWindow)
 	}
 }
 
