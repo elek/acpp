@@ -57,3 +57,25 @@ test('paste an image exposed only via clipboardData.files stages it (WebKit)', a
   await project.pasteImageViaFiles('red.png', 'image/png', RED_PNG_B64);
   await expect(project.attachmentThumbs).toHaveCount(1);
 });
+
+// Regression: WebKitGTK (the Linux desktop wrapper's engine) is stricter than
+// the .files case above — on image paste it drops image MIME types from the
+// synchronous paste event entirely, so BOTH clipboardData.items and .files are
+// empty (WebKit bug 218519). The image is reachable only through the async
+// Clipboard API. This is the true "paste works in the webapp but not the desktop
+// app" reproduction the earlier .files-only fix missed. Assert the async path
+// stages the image.
+test('paste an image reachable only via the async Clipboard API stages it (WebKitGTK)', async ({
+  page,
+  tempProject,
+}) => {
+  const sessions = new SessionsPage(page);
+  await sessions.goto();
+  await sessions.createSession(tempProject.dir);
+
+  const project = new ProjectPage(page);
+  await project.goto(tempProject.name);
+
+  await project.pasteImageViaAsyncClipboard('image/png', RED_PNG_B64);
+  await expect(project.attachmentThumbs).toHaveCount(1);
+});

@@ -146,6 +146,35 @@ export class ProjectPage {
     await expect.poll(() => this.attachmentThumbs.count()).toBeGreaterThan(before);
   }
 
+  // pasteImageViaAsyncClipboard simulates the ACTUAL behaviour of WebKitGTK (the
+  // Linux desktop wrapper's engine): on image paste it drops image MIME types
+  // from the synchronous paste event, so clipboardData.items AND .files are both
+  // empty (WebKit bug 218519). The image is reachable only through the async
+  // Clipboard API. This is the case pasteImageViaFiles does NOT cover — .files is
+  // also empty here — and is the real "paste works in the webapp but not the
+  // desktop app" reproduction. We stub navigator.clipboard.read to stand in for
+  // the system clipboard and dispatch an empty paste event.
+  async pasteImageViaAsyncClipboard(mimeType: string, base64: string): Promise<void> {
+    const before = await this.attachmentThumbs.count();
+    await this.promptInput.evaluate((el, args) => {
+      const bin = atob(args.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: args.mimeType });
+      const stub = () => Promise.resolve([{ types: [args.mimeType], getType: () => Promise.resolve(blob) }]);
+      try {
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { read: stub } });
+      } catch {
+        (navigator.clipboard as unknown as { read: () => Promise<unknown> }).read = stub;
+      }
+      // WebKitGTK-style paste event: image absent from both .items and .files.
+      const ev = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'clipboardData', { value: { items: [], files: [] } });
+      el.dispatchEvent(ev);
+    }, { mimeType, base64 });
+    await expect.poll(() => this.attachmentThumbs.count()).toBeGreaterThan(before);
+  }
+
   private turnsBefore = 0;
 
   // waitForResponse blocks until the turn started by the last send() completes

@@ -1261,19 +1261,38 @@
       var cd = e.clipboardData || {};
       var items = cd.items || [];
       var staged = false;
+      var hasText = false;
       for (var i = 0; i < items.length; i++) {
         if (items[i].type && items[i].type.indexOf('image/') === 0) {
           addImage(items[i].getAsFile());
           staged = true;
+        } else if (items[i].kind === 'string') {
+          hasText = true;
         }
       }
-      // WebKit engines (WebKitGTK on Linux, WKWebView on macOS) used by native
-      // desktop wrappers expose a pasted image via clipboardData.files, not
-      // .items. Fall back to it when .items had no image so paste works outside
-      // Chromium browsers too.
+      // WKWebView (macOS) exposes a pasted image via clipboardData.files rather
+      // than .items. Fall back to it when .items carried no image.
       if (!staged) {
         var files = cd.files || [];
-        for (var j = 0; j < files.length; j++) addImage(files[j]);
+        for (var j = 0; j < files.length; j++) {
+          if (files[j].type && files[j].type.indexOf('image/') === 0) { addImage(files[j]); staged = true; }
+        }
+      }
+      // WebKitGTK (the Linux desktop wrapper's engine) drops image MIME types
+      // from the synchronous paste event entirely (WebKit bug 218519) — both
+      // .items and .files come back empty, so neither branch above fires. The
+      // image is only reachable through the async Clipboard API. Probe it only
+      // when the event carried no image AND no text, so ordinary text pastes
+      // never trigger a clipboard-read permission prompt in Chromium (which
+      // already staged images via .items above).
+      if (!staged && !hasText && navigator.clipboard && navigator.clipboard.read) {
+        navigator.clipboard.read().then(function(clipItems) {
+          clipItems.forEach(function(clip) {
+            (clip.types || []).forEach(function(type) {
+              if (type.indexOf('image/') === 0) clip.getType(type).then(addImage);
+            });
+          });
+        }).catch(function() {});
       }
     });
 
