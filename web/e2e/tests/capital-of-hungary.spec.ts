@@ -25,10 +25,11 @@ test('prompt, stop, and start a new session', async ({ page, tempProject }) => {
   // 4. Stop the running session.
   await project.stop();
 
-  // 5. Send/Cancel gone, text area remains, a "New session" button appears.
+  // 5. The prompt bar is gone entirely: a finished session cannot be prompted.
   await project.expectStoppedState();
 
-  // 6. Start a new session and ask the recall question.
+  // 6. Start a new session (via the session-bar "new" button) and ask the recall
+  //    question.
   await project.startNewSession();
   await project.send('what was the previous question');
 

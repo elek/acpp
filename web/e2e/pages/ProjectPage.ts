@@ -5,9 +5,9 @@ import { Page, Locator, expect } from '@playwright/test';
 // template changes touch a single file.
 export class ProjectPage {
   readonly promptInput: Locator;
+  readonly promptBar: Locator;
   readonly sendButton: Locator;
   readonly cancelButton: Locator;
-  readonly newSessionButton: Locator;
   readonly newConversationButton: Locator;
   readonly stopButton: Locator;
   readonly sessionStatus: Locator;
@@ -32,15 +32,15 @@ export class ProjectPage {
 
   constructor(private readonly page: Page) {
     this.promptInput = page.locator('#prompt-input');
+    this.promptBar = page.locator('#prompt-bar');
     this.sendButton = page.locator('#prompt-send');
     this.cancelButton = page.locator('#prompt-cancel');
     this.fileInput = page.locator('#prompt-file');
     this.attachmentThumbs = page.locator('#prompt-attachments .prompt-attachment');
     this.userImages = page.locator('#conversation .msg-user .msg-content img');
-    this.newSessionButton = page.locator('#prompt-new-session');
-    // The always-visible "new" conversation button in the top session bar
-    // (distinct from #prompt-new-session, which only appears once a session is
-    // stopped).
+    // The always-visible "new" conversation button in the top session bar. Once a
+    // session finishes, the prompt bar is hidden entirely and this is the only way
+    // to start a fresh session.
     this.newConversationButton = page.locator('#new-conversation-btn');
     this.stopButton = page.locator('#stop-btn');
     this.sessionStatus = page.locator('.session-bar .session-status');
@@ -165,21 +165,20 @@ export class ProjectPage {
     await this.stopButton.click();
   }
 
-  // expectStoppedState asserts the post-stop prompt bar: Send and Cancel are
-  // gone, the text area remains, and a "New session" button is offered.
+  // expectStoppedState asserts that a finished session offers no way to send a
+  // new prompt: the entire prompt bar is hidden. Starting a fresh session is done
+  // from the session-bar "new" button instead.
   async expectStoppedState(): Promise<void> {
-    await expect(this.newSessionButton).toBeVisible();
-    await expect(this.sendButton).toBeHidden();
-    await expect(this.cancelButton).toBeHidden();
-    await expect(this.promptInput).toBeVisible();
+    await expect(this.promptBar).toBeHidden();
   }
 
-  // startNewSession clicks "New session" and waits for the prompt bar to return
-  // to normal Send mode against the fresh session.
+  // startNewSession starts a fresh session via the session-bar "new" button (the
+  // finished session's prompt bar is hidden) and waits for the prompt bar to
+  // return in Send mode against the new session.
   async startNewSession(): Promise<void> {
-    await this.newSessionButton.click();
+    await this.newConversationButton.click();
+    await expect(this.promptBar).toBeVisible();
     await expect(this.sendButton).toBeVisible();
-    await expect(this.newSessionButton).toBeHidden();
   }
 
   // currentSessionId reads the `session` query param from the browser URL, which
