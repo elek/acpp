@@ -20,10 +20,11 @@ type Sandbox interface {
 
 // BwrapConfig represents a single fragment in the bwrap config YAML.
 type BwrapConfig struct {
-	Extend []string          `yaml:"extend"`
-	ROBind []string          `yaml:"ro-bind"`
-	Bind   []string          `yaml:"bind"`
-	Env    map[string]string `yaml:"env"`
+	Extend  []string          `yaml:"extend"`
+	ROBind  []string          `yaml:"ro-bind"`
+	Bind    []string          `yaml:"bind"`
+	DevBind []string          `yaml:"dev-bind"`
+	Env     map[string]string `yaml:"env"`
 }
 
 // noneSandbox passes commands through without wrapping.

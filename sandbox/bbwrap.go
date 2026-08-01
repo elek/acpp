@@ -65,16 +65,18 @@ func (b *bwrapSandbox) Wrap(command string, args []string) (string, []string) {
 
 // resolvedConfig holds the flattened result of resolving a fragment tree.
 type resolvedConfig struct {
-	roBind []string
-	bind   []string
-	env    map[string]string
+	roBind  []string
+	bind    []string
+	devBind []string
+	env     map[string]string
 }
 
 func mergeResolved(base, overlay resolvedConfig) resolvedConfig {
 	result := resolvedConfig{
-		roBind: append(append([]string{}, base.roBind...), overlay.roBind...),
-		bind:   append(append([]string{}, base.bind...), overlay.bind...),
-		env:    make(map[string]string),
+		roBind:  append(append([]string{}, base.roBind...), overlay.roBind...),
+		bind:    append(append([]string{}, base.bind...), overlay.bind...),
+		devBind: append(append([]string{}, base.devBind...), overlay.devBind...),
+		env:     make(map[string]string),
 	}
 	for k, v := range base.env {
 		result.env[k] = v
@@ -116,6 +118,7 @@ func resolveFragment(name string, fragments map[string]*BwrapConfig, visited map
 	// Collect this fragment's own entries
 	result.roBind = append(result.roBind, frag.ROBind...)
 	result.bind = append(result.bind, frag.Bind...)
+	result.devBind = append(result.devBind, frag.DevBind...)
 	for k, v := range frag.Env {
 		result.env[k] = v
 	}
@@ -181,6 +184,13 @@ func buildBwrapArgs(name string, resolved resolvedConfig, cwd string) ([]string,
 	for _, entry := range resolved.bind {
 		src, dest := parseBindEntry(entry)
 		args = append(args, "--bind", src, dest)
+	}
+
+	// Config-driven device binds (e.g. GPU nodes under /dev). Emitted after the
+	// static "--dev /dev" above so they layer on top of the fresh devtmpfs.
+	for _, entry := range resolved.devBind {
+		src, dest := parseBindEntry(entry)
+		args = append(args, "--dev-bind", src, dest)
 	}
 
 	// Config-driven environment variables
