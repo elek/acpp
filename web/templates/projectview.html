@@ -349,7 +349,6 @@
         <input type="file" id="prompt-file" accept="image/*" multiple hidden>
         <textarea id="prompt-input" placeholder="Send a prompt..." rows="1"></textarea>
         <button id="prompt-cancel" class="prompt-cancel" style="display:none">Cancel</button>
-        <button id="prompt-new-session" class="prompt-send" style="display:none">New session</button>
         <button id="prompt-send" class="prompt-send">Send</button>
       </div>
       <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline · paste, drop, or 📎 to attach images</div>
@@ -866,7 +865,16 @@
     lws.onmessage = function(e) {
       var ev;
       try { ev = JSON.parse(e.data); } catch (err) { return; }
-      if (ev.event_type === 'session_lifecycle') scheduleTaskbarRefresh();
+      if (ev.event_type !== 'session_lifecycle') return;
+      scheduleTaskbarRefresh();
+      // If the session this page is viewing just finished on its own (no manual
+      // Stop), finalize its bar in place so the prompt bar disappears without a
+      // reload. finalizeSession is idempotent, so a redundant nudge is harmless.
+      var p = ev.payload || {};
+      if (p.phase === 'closed' && sessionId && p.session_id === sessionId && isSessionRunning) {
+        var status = p.status === 'error' ? 'error' : 'complete';
+        finalizeSession(status, 'status-' + status);
+      }
     };
     // Reconnect: unlike the per-session socket, a dropped lifecycle socket would
     // silently freeze the taskbar, so keep trying.
@@ -878,7 +886,6 @@
   var input = document.getElementById('prompt-input');
   var btn = document.getElementById('prompt-send');
   var cancelBtn = document.getElementById('prompt-cancel');
-  var newSessionBtn = document.getElementById('prompt-new-session');
 
   function updateCancelButton() {
     if (cancelBtn) {
@@ -887,17 +894,36 @@
   }
 
   // updatePromptBarMode reflects the session state in the prompt bar. When a
-  // session exists but is no longer running (e.g. it was stopped), the Send and
-  // Cancel buttons disappear and a "New session" button takes their place; the
-  // text area always remains. With no session (fresh project) or a running
-  // session, Send is shown so a prompt can be sent (creating a session if none).
+  // session exists but is no longer running (e.g. it was finished/stopped) the
+  // whole prompt bar is hidden: there is no more sending on a finished session,
+  // and the "+ new" button in the session bar is how you start a fresh one.
+  // With no session (fresh project) or a running session, the bar is shown with
+  // Send so a prompt can be sent (creating a session if none).
+  var promptBarEl = document.getElementById('prompt-bar');
   function updatePromptBarMode() {
     var stopped = !!(sessionId && !isSessionRunning);
+    if (promptBarEl) promptBarEl.style.display = stopped ? 'none' : '';
     if (btn) btn.style.display = stopped ? 'none' : '';
-    if (newSessionBtn) newSessionBtn.style.display = stopped ? '' : 'none';
     updateCancelButton();
   }
   updatePromptBarMode();
+
+  // finalizeSession switches the session bar out of its running state when the
+  // viewed session ends — whether from the Stop button here or a lifecycle
+  // "closed" nudge for a session that finished on its own. Hides the Stop button
+  // and prompt bar and repaints the status pill. Idempotent.
+  function finalizeSession(statusText, cls) {
+    isSessionRunning = false;
+    var stopForm = document.getElementById('stop-form');
+    if (stopForm) stopForm.style.display = 'none';
+    var statusEl = document.querySelector('.session-bar .session-status');
+    if (statusEl) {
+      statusEl.className = 'session-status ' + cls;
+      statusEl.textContent = statusText;
+    }
+    updateInfoStatus(statusText, cls);
+    updatePromptBarMode();
+  }
 
   if (input && btn) {
     var sending = false;
@@ -1131,13 +1157,12 @@
 
     btn.addEventListener('click', sendPrompt);
 
-    // "New session" starts a fresh session in place (no prompt yet) and returns
-    // the prompt bar to normal Send mode so the next message goes to it.
+    // startNewSession starts a fresh session in place (no prompt yet) and returns
+    // the prompt bar to normal Send mode so the next message goes to it. Driven by
+    // the session-bar "new" button.
     function startNewSession() {
       if (!creatorEnabled || sending) return;
       sending = true;
-      newSessionBtn.disabled = true;
-      newSessionBtn.textContent = 'Creating...';
       fetch('/projects/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1187,21 +1212,18 @@
         alert('Failed to create session: ' + err.message);
       }).finally(function() {
         sending = false;
-        newSessionBtn.disabled = false;
-        newSessionBtn.textContent = 'New session';
       });
     }
 
-    if (newSessionBtn) newSessionBtn.addEventListener('click', startNewSession);
-
     // The session-bar "new" button is always present (even before any session
-    // exists) and drives the same fresh-session flow as the prompt-bar button.
+    // exists) and is how a fresh session is started; once a session ends its
+    // prompt bar is hidden, so this is the only entry point to a new one.
     var newConvBtn = document.getElementById('new-conversation-btn');
     if (newConvBtn) newConvBtn.addEventListener('click', startNewSession);
 
     // Stopping ends the session. Drive the prompt-bar state from the click
     // directly (rather than a full-page reload that races the server-side status
-    // finalization): hide the Stop button and switch to "New session" mode.
+    // finalization): hide the Stop button and the prompt bar.
     var stopForm = document.getElementById('stop-form');
     if (stopForm) {
       stopForm.addEventListener('submit', function(e) {
@@ -1210,15 +1232,7 @@
         var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
         if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
         fetch(stopForm.action, { method: 'POST' }).then(function() {
-          isSessionRunning = false;
-          stopForm.style.display = 'none';
-          var statusEl = document.querySelector('.session-bar .session-status');
-          if (statusEl) {
-            statusEl.className = 'session-status status-complete';
-            statusEl.textContent = 'stopped';
-          }
-          updateInfoStatus('stopped', 'status-complete');
-          updatePromptBarMode();
+          finalizeSession('stopped', 'status-complete');
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);
           if (stopBtn) { stopBtn.disabled = false; if (stopLabel) stopLabel.textContent = 'Stop'; }

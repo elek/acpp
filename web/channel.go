@@ -99,8 +99,15 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 		// A new session row exists (pending): it should appear in the taskbar.
 		c.publishLifecycle(id.ConversationID, "created")
 	case types.ConversationClosed:
-		// The session finished/errored: it drops out of the taskbar's live filter.
-		c.publishLifecycle(id.ConversationID, "closed")
+		// The session finished/errored: it drops out of the taskbar's live filter,
+		// and any page currently viewing it must finalize its status pill and hide
+		// the prompt bar. Carry the resolved final status so the frontend renders
+		// it accurately instead of guessing.
+		status := types.StatusComplete
+		if m.Err != "" {
+			status = types.StatusError
+		}
+		c.publishLifecycleClosed(id.ConversationID, string(status))
 	case types.ConversationReplaced:
 		c.handleReplaced(m)
 	}
@@ -144,6 +151,14 @@ func (c *WebChannel) publish(sessionID, eventType string, raw json.RawMessage) {
 // rather than trusting any state carried here.
 func (c *WebChannel) publishLifecycle(sessionID, phase string) {
 	payload, _ := json.Marshal(map[string]string{"session_id": sessionID, "phase": phase})
+	c.hub.Publish(LifecycleTopic, logEntry{EventType: "session_lifecycle", Payload: payload})
+}
+
+// publishLifecycleClosed is publishLifecycle for a finished session, additionally
+// carrying the resolved final status ("complete"/"error"). A page viewing this
+// session uses it to switch the session bar out of its running state.
+func (c *WebChannel) publishLifecycleClosed(sessionID, status string) {
+	payload, _ := json.Marshal(map[string]string{"session_id": sessionID, "phase": "closed", "status": status})
 	c.hub.Publish(LifecycleTopic, logEntry{EventType: "session_lifecycle", Payload: payload})
 }
 
