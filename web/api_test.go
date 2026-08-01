@@ -52,6 +52,9 @@ func seedStore(t *testing.T) *db.MemStore {
 	if err := store.SetProjectField(ctx, "acpp", "agent", "claude"); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SetProjectField(ctx, "acpp", "sandbox_profiles", "docker,ssh"); err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Now()
 	if err := store.InsertSession(ctx, "s1", "web", "claude", dir, "", "", "", "acpp", nil, now); err != nil {
@@ -61,7 +64,7 @@ func seedStore(t *testing.T) *db.MemStore {
 		t.Fatal(err)
 	}
 
-	if err := store.InsertSession(ctx, "s2", "web", "claude", dir, "", "", "", "acpp", nil, now.Add(-time.Minute)); err != nil {
+	if err := store.InsertSession(ctx, "s2", "web", "claude", dir, "bbwrap", "", "", "acpp", nil, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	info := acplib.StatusInfo{Status: acplib.StatusComplete, Model: "claude-sonnet-4.6"}

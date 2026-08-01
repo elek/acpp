@@ -545,6 +545,8 @@ func (m *MemStore) SetProjectField(ctx context.Context, name, field, value strin
 		p.Dir = value
 	case "sandbox":
 		p.Sandbox = value
+	case "sandbox_profiles":
+		p.SandboxProfiles = value
 	case "permission":
 		p.Permission = value
 	case "repo":

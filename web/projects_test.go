@@ -191,6 +191,20 @@ func TestViewProjectsRendersSessionInfoPanel(t *testing.T) {
 	if !strings.Contains(body, "claude-sonnet-4.6") {
 		t.Errorf("model not rendered in info panel")
 	}
+	// Sandbox type (from the session row) and profiles (from the project) are
+	// surfaced in the panel.
+	if !strings.Contains(body, ">Sandbox<") {
+		t.Errorf("sandbox label not rendered in info panel")
+	}
+	if !strings.Contains(body, "bbwrap") {
+		t.Errorf("sandbox type not rendered in info panel:\n%s", body)
+	}
+	if !strings.Contains(body, ">Profiles<") {
+		t.Errorf("profiles label not rendered in info panel")
+	}
+	if !strings.Contains(body, "docker,ssh") {
+		t.Errorf("sandbox profiles not rendered in info panel:\n%s", body)
+	}
 }
 
 func TestViewProjectsNoSessionInfoWithoutSession(t *testing.T) {

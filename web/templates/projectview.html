@@ -323,6 +323,14 @@
         <div class="info-row-label">Model</div>
         <div class="info-row-value">{{if .ActiveSession.Model}}{{.ActiveSession.Model}}{{else}}&mdash;{{end}}</div>
       </div>
+      <div class="info-row">
+        <div class="info-row-label">Sandbox</div>
+        <div class="info-row-value">{{if .ActiveSandbox}}{{.ActiveSandbox}}{{else}}&mdash;{{end}}</div>
+      </div>
+      <div class="info-row">
+        <div class="info-row-label">Profiles</div>
+        <div class="info-row-value">{{if .ActiveProfiles}}{{.ActiveProfiles}}{{else}}&mdash;{{end}}</div>
+      </div>
       <div class="info-ctx">
         <div class="info-ctx-head">
           <span class="info-ctx-label">Context Window</span>

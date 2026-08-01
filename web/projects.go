@@ -260,6 +260,18 @@ func (s *Server) viewProjects(c echo.Context) error {
 					data["ContextUsed"] = used
 					data["ContextWindow"] = window
 					data["ContextPct"] = pct
+					// The session row records the resolved sandbox type. Profiles
+					// are not persisted per-session, so fall back to the project's
+					// configured sandbox/profiles as the best available proxy.
+					data["ActiveSandbox"] = sess.Sandbox
+					if s.projects != nil {
+						if p, err := s.projects.GetProject(ctx, activeProject); err == nil {
+							data["ActiveProfiles"] = p.SandboxProfiles
+							if sess.Sandbox == "" {
+								data["ActiveSandbox"] = p.Sandbox
+							}
+						}
+					}
 					break
 				}
 			}
