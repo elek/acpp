@@ -142,7 +142,7 @@ func (p *Persister) observeUpdate(sid string, update acp.SessionUpdate) {
 		}
 		if u := extractUsageFromMeta(c.Meta); u.InputTokens > 0 || u.OutputTokens > 0 {
 			u.PromptCount = st.info.Usage.PromptCount
-			st.info.Usage = u
+			st.info.Usage = carryContext(st.info.Usage, u)
 		}
 	}
 
@@ -206,7 +206,7 @@ func (p *Persister) endTurn(sid string, resp acp.PromptResponse) {
 	// _meta modelUsage, then the typed Usage value from newer agents.
 	if u := extractUsageFromMeta(resp.Meta); u.InputTokens > 0 || u.OutputTokens > 0 {
 		count := st.info.Usage.PromptCount
-		st.info.Usage = u
+		st.info.Usage = carryContext(st.info.Usage, u)
 		st.info.Usage.PromptCount = count
 	} else if u := resp.Usage; u != nil {
 		st.info.Usage.InputTokens = int64(u.InputTokens)
@@ -282,6 +282,22 @@ func modelFromMeta(meta map[string]any) string {
 
 // extractUsageFromMeta extracts cumulative usage data from ACP _meta, summing
 // across all models within modelUsage.
+// carryContext preserves the authoritative context-window occupancy across a
+// full Usage replacement. modelUsage-based _meta reports cumulative token
+// counters and sometimes the window size, but never the current "used" amount —
+// that only arrives via a typed usage_update. Without this carry-over, a chunk
+// or prompt response that lands after the usage_update would reset ContextUsed
+// to zero, dropping the one figure the context-window display depends on.
+func carryContext(prev, next types.UsageInfo) types.UsageInfo {
+	if next.ContextUsed == 0 {
+		next.ContextUsed = prev.ContextUsed
+	}
+	if next.ContextWindow == 0 {
+		next.ContextWindow = prev.ContextWindow
+	}
+	return next
+}
+
 func extractUsageFromMeta(meta map[string]any) types.UsageInfo {
 	var info types.UsageInfo
 	var section map[string]any

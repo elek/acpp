@@ -97,6 +97,8 @@ func (m *MemStore) UpdateSession(ctx context.Context, id string, info acplib.Sta
 	s.OutputTokens = info.Usage.OutputTokens
 	s.CacheCreationInputTokens = info.Usage.CacheCreationInputTokens
 	s.CacheReadInputTokens = info.Usage.CacheReadInputTokens
+	s.ContextUsed = info.Usage.ContextUsed
+	s.ContextWindow = info.Usage.ContextWindow
 	s.CostUSD = info.Usage.CostUSD
 	s.PromptCount = info.Usage.PromptCount
 	m.sessions[id] = s
@@ -119,6 +121,8 @@ func (m *MemStore) FinishSession(ctx context.Context, id string, info acplib.Sta
 	s.OutputTokens = info.Usage.OutputTokens
 	s.CacheCreationInputTokens = info.Usage.CacheCreationInputTokens
 	s.CacheReadInputTokens = info.Usage.CacheReadInputTokens
+	s.ContextUsed = info.Usage.ContextUsed
+	s.ContextWindow = info.Usage.ContextWindow
 	s.CostUSD = info.Usage.CostUSD
 	s.PromptCount = info.Usage.PromptCount
 	now := time.Now()

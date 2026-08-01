@@ -181,11 +181,12 @@ func TestViewProjectsRendersSessionInfoPanel(t *testing.T) {
 	if !strings.Contains(body, "Session Info") {
 		t.Errorf("session info title not rendered")
 	}
-	// Context window: used = 100000 + 3800 = 103800 of 200000 (claude) => 51%.
-	if !strings.Contains(body, "103.8K / 200K") {
+	// Context window: authoritative occupancy 120000 of 200000 (claude) => 60%.
+	// The cumulative token counters (103800) must NOT be used.
+	if !strings.Contains(body, "120K / 200K") {
 		t.Errorf("context window count not rendered:\n%s", body)
 	}
-	if !strings.Contains(body, "51% used") {
+	if !strings.Contains(body, "60% used") {
 		t.Errorf("context window percent not rendered")
 	}
 	if !strings.Contains(body, "claude-sonnet-4.6") {

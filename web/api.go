@@ -189,8 +189,8 @@ func (s *Server) sessionJSON(ctx context.Context, r db.SessionRow) SessionJSON {
 		StopReason:    stopReason,
 		Preview:       preview,
 		Model:         r.Model,
-		ContextUsed:   r.InputTokens + r.CacheCreationInputTokens + r.CacheReadInputTokens,
-		ContextWindow: contextWindowForModel(r.Model),
+		ContextUsed:   contextUsed(r),
+		ContextWindow: contextWindow(r),
 		CostUSD:       cost,
 		CreatedAt:     r.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:     updated.UTC().Format(time.RFC3339),
@@ -209,6 +209,25 @@ func mapStatus(status string) string {
 	default:
 		return "idle"
 	}
+}
+
+// contextUsed returns the current context-window occupancy: the agent's
+// authoritative usage_update figure when present. It deliberately does NOT sum
+// the cumulative token counters (input + cache_creation + cache_read) — those
+// re-count the cached prefix on every turn and grow far past the real window,
+// which produced the "362.3K / 200K" nonsense. Zero means occupancy is unknown
+// (e.g. an agent that never emits a usage_update).
+func contextUsed(r db.SessionRow) int64 {
+	return r.ContextUsed
+}
+
+// contextWindow returns the model's total context window: the agent-reported
+// size when present, else a per-model fallback.
+func contextWindow(r db.SessionRow) int64 {
+	if r.ContextWindow > 0 {
+		return r.ContextWindow
+	}
+	return contextWindowForModel(r.Model)
 }
 
 // contextWindowForModel returns the model's context window, defaulting when the
