@@ -10,6 +10,7 @@ export class ProjectPage {
   readonly cancelButton: Locator;
   readonly newConversationButton: Locator;
   readonly stopButton: Locator;
+  readonly stopForm: Locator;
   readonly sessionStatus: Locator;
   readonly sessionSelect: Locator;
   readonly conversation: Locator;
@@ -49,6 +50,9 @@ export class ProjectPage {
     // to start a fresh session.
     this.newConversationButton = page.locator('#new-conversation-btn');
     this.stopButton = page.locator('#stop-btn');
+    // The Stop button's form — its `action` must always point at the session
+    // currently on screen, which matters when a session is swapped in-place.
+    this.stopForm = page.locator('#stop-form');
     this.sessionStatus = page.locator('.session-bar .session-status');
     this.sessionSelect = page.locator('#session-select');
     this.conversation = page.locator('#conversation');

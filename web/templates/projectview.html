@@ -62,6 +62,10 @@
   .status-error { background: #fee2e2; color: #991b1b; }
   .status-pending { background: #fef9c3; color: #854d0e; }
   .session-bar-spacer { flex: 1; }
+  /* The Stop form is always in the DOM so an in-place session swap can reveal it
+     without a reload; `stop-form-off` is how it stays out of sight until then. */
+  .stop-form { display: inline; margin: 0; }
+  .stop-form.stop-form-off { display: none; }
   .stop-btn { display: inline-flex; align-items: center; gap: 0.375em; background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; padding: 0.3em 0.75em; border-radius: 8px; font-size: 0.75em; font-weight: 600; cursor: pointer; transition: background 0.15s; }
   .stop-btn:hover { background: #fee2e2; }
   .stop-btn:disabled { cursor: default; opacity: 0.7; }
@@ -241,13 +245,12 @@
       <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
       {{end}}
       <div class="session-bar-spacer"></div>
-      {{if .ActiveSession}}
-      {{if or (eq .ActiveSession.Status "running") (eq .ActiveSession.Status "pending")}}
-      <form id="stop-form" method="POST" action="/session/{{.ActiveSession.ID}}/stop" style="display:inline;margin:0">
+      <!-- Rendered even with no session (hidden): a session started in place —
+           the first prompt on a fresh project, or the "new" button — reveals and
+           re-targets this form client-side, with no reload. -->
+      <form id="stop-form" class="stop-form{{if not .ActiveRunning}} stop-form-off{{end}}" method="POST" action="/session/{{.ActiveSessionID}}/stop">
         <button type="submit" class="stop-btn" id="stop-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg><span class="btn-label">Stop</span></button>
       </form>
-      {{end}}
-      {{end}}
       {{if .CreatorEnabled}}
       <button type="button" class="new-btn" id="new-conversation-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg><span class="btn-label">new</span></button>
       {{end}}
@@ -411,7 +414,7 @@
   var activeProject = '{{.ActiveProject}}';
   var activeDir = '{{.ActiveDir}}';
   var sessionId = '{{.ActiveSessionID}}';
-  var isSessionRunning = {{if .ActiveSession}}('{{.ActiveSession.Status}}' === 'running' || '{{.ActiveSession.Status}}' === 'pending'){{else}}false{{end}};
+  var isSessionRunning = {{if .ActiveRunning}}true{{else}}false{{end}};
   var creatorEnabled = {{if .CreatorEnabled}}true{{else}}false{{end}};
   var container = document.getElementById('conversation');
   var ws = null;
@@ -946,18 +949,43 @@
     }
   }
 
-  // updatePromptBarMode reflects the session state in the prompt bar. When a
-  // session exists but is no longer running (e.g. it was finished/stopped) the
-  // whole prompt bar is hidden: there is no more sending on a finished session,
-  // and the "+ new" button in the session bar is how you start a fresh one.
-  // With no session (fresh project) or a running session, the bar is shown with
-  // Send so a prompt can be sent (creating a session if none).
+  // updateStopButton points the Stop form at the session currently on screen and
+  // shows it only while that session can still be stopped. The form is always in
+  // the DOM — the server may have rendered the page with no session at all — so a
+  // session started in place (first prompt on a fresh project, the "new" button,
+  // /clear) gets a working Stop button without a reload.
+  var stopFormEl = document.getElementById('stop-form');
+  function updateStopButton() {
+    if (!stopFormEl) return;
+    var canStop = !!(sessionId && isSessionRunning);
+    if (canStop) {
+      stopFormEl.action = '/session/' + encodeURIComponent(sessionId) + '/stop';
+      // A previous session may have left the button mid-stop; reset it so it is
+      // usable for this one.
+      var stopBtn = document.getElementById('stop-btn');
+      if (stopBtn) {
+        stopBtn.disabled = false;
+        var stopLabel = stopBtn.querySelector('.btn-label');
+        if (stopLabel) stopLabel.textContent = 'Stop';
+      }
+    }
+    stopFormEl.classList.toggle('stop-form-off', !canStop);
+  }
+
+  // updatePromptBarMode reflects the session state in the prompt bar and the
+  // session-bar controls that track it. When a session exists but is no longer
+  // running (e.g. it was finished/stopped) the whole prompt bar is hidden: there
+  // is no more sending on a finished session, and the "+ new" button in the
+  // session bar is how you start a fresh one. With no session (fresh project) or
+  // a running session, the bar is shown with Send so a prompt can be sent
+  // (creating a session if none).
   var promptBarEl = document.getElementById('prompt-bar');
   function updatePromptBarMode() {
     var stopped = !!(sessionId && !isSessionRunning);
     if (promptBarEl) promptBarEl.style.display = stopped ? 'none' : '';
     if (btn) btn.style.display = stopped ? 'none' : '';
     updateCancelButton();
+    updateStopButton();
   }
   updatePromptBarMode();
 
@@ -967,8 +995,6 @@
   // and prompt bar and repaints the status pill. Idempotent.
   function finalizeSession(statusText, cls) {
     isSessionRunning = false;
-    var stopForm = document.getElementById('stop-form');
-    if (stopForm) stopForm.style.display = 'none';
     var statusEl = document.querySelector('.session-bar .session-status');
     if (statusEl) {
       statusEl.className = 'session-status ' + cls;
@@ -1087,6 +1113,9 @@
             if (data.new_session_id) {
               var oldId = sessionId;
               sessionId = data.new_session_id;
+              // Re-point the session-bar controls (Stop, Cancel) at the
+              // replacement session.
+              updatePromptBarMode();
 
               // Reset rendering state
               assistantText = '';
@@ -1277,14 +1306,13 @@
     // Stopping ends the session. Drive the prompt-bar state from the click
     // directly (rather than a full-page reload that races the server-side status
     // finalization): hide the Stop button and the prompt bar.
-    var stopForm = document.getElementById('stop-form');
-    if (stopForm) {
-      stopForm.addEventListener('submit', function(e) {
+    if (stopFormEl) {
+      stopFormEl.addEventListener('submit', function(e) {
         e.preventDefault();
         var stopBtn = document.getElementById('stop-btn');
         var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
         if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
-        fetch(stopForm.action, { method: 'POST' }).then(function() {
+        fetch(stopFormEl.action, { method: 'POST' }).then(function() {
           finalizeSession('stopped', 'status-complete');
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);
