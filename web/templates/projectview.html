@@ -317,7 +317,7 @@
       </div>
       <div class="info-row">
         <div class="info-row-label">Cost</div>
-        <div class="info-row-value info-cost">${{printf "%.4f" .ActiveSession.CostUSD}}</div>
+        <div class="info-row-value info-cost" id="info-cost">${{printf "%.4f" .ActiveSession.CostUSD}}</div>
       </div>
       <div class="info-row">
         <div class="info-row-label">Model</div>
@@ -334,10 +334,10 @@
       <div class="info-ctx">
         <div class="info-ctx-head">
           <span class="info-ctx-label">Context Window</span>
-          <span class="info-ctx-count">{{humanTokens .ContextUsed}} / {{humanTokens .ContextWindow}}</span>
+          <span class="info-ctx-count" id="info-ctx-count">{{humanTokens .ContextUsed}} / {{humanTokens .ContextWindow}}</span>
         </div>
-        <div class="info-ctx-track"><div class="info-ctx-fill" style="width: {{.ContextPct}}%"></div></div>
-        <div class="info-ctx-pct">{{.ContextPct}}% used</div>
+        <div class="info-ctx-track"><div class="info-ctx-fill" id="info-ctx-fill" style="width: {{.ContextPct}}%"></div></div>
+        <div class="info-ctx-pct" id="info-ctx-pct">{{.ContextPct}}% used</div>
       </div>
     </aside>
     {{end}}
@@ -435,6 +435,47 @@
     infoPanel.style.display = open ? "" : "none";
     infoBtn.classList.toggle("active", open);
     try { localStorage.setItem("acpp.sessionInfoOpen", open ? "1" : "0"); } catch (e) {}
+    // Opening the panel pulls the authoritative cost/context from the API so the
+    // figures are fresh even for a finished session (no live socket) or after any
+    // streamed usage_update was missed.
+    if (open) refreshSessionInfo();
+  }
+  // humanTokens mirrors the Go template helper of the same name so live updates
+  // format identically to the server-rendered values.
+  function humanTokens(v) {
+    v = v || 0;
+    if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (v >= 1000) return (v % 1000 === 0) ? (v / 1000) + 'K' : (v / 1000).toFixed(1) + 'K';
+    return String(v);
+  }
+  // applySessionInfo patches the Session Info panel's cost and context-window
+  // figures in place. Fields are updated only when present so a partial payload
+  // (e.g. a usage_update without cost) never blanks a known value.
+  function applySessionInfo(info) {
+    if (!infoPanel || !info) return;
+    if (typeof info.cost_usd === 'number') {
+      var costEl = document.getElementById('info-cost');
+      if (costEl) costEl.textContent = '$' + info.cost_usd.toFixed(4);
+    }
+    var used = info.context_used || 0;
+    var win = info.context_window || 0;
+    if (used || win) {
+      var countEl = document.getElementById('info-ctx-count');
+      if (countEl) countEl.textContent = humanTokens(used) + ' / ' + humanTokens(win);
+      var pct = win > 0 ? Math.min(100, Math.floor(used * 100 / win)) : 0;
+      var fillEl = document.getElementById('info-ctx-fill');
+      if (fillEl) fillEl.style.width = pct + '%';
+      var pctEl = document.getElementById('info-ctx-pct');
+      if (pctEl) pctEl.textContent = pct + '% used';
+    }
+  }
+  // refreshSessionInfo fetches the authoritative session telemetry from the API.
+  function refreshSessionInfo() {
+    if (!infoPanel || !sessionId) return;
+    fetch('/api/session/' + encodeURIComponent(sessionId))
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(info) { if (info) applySessionInfo(info); })
+      .catch(function() { /* transient; the panel keeps its last-known values */ });
   }
   if (infoBtn && infoPanel) {
     var infoOpen = false;
@@ -657,6 +698,18 @@
 
   function appendEvent(ev) {
     var p = ev.payload;
+    // Usage updates (streamed live during a run, and replayed from history) carry
+    // no conversation content: they only refresh the Session Info panel's cost and
+    // context-window figures. Older persisted rows are typed "unknown", so key off
+    // the payload tag rather than the event_type alone.
+    if (p && p.sessionUpdate === 'usage_update') {
+      applySessionInfo({
+        context_used: p.used,
+        context_window: p.size,
+        cost_usd: (p.cost && typeof p.cost.amount === 'number') ? p.cost.amount : undefined
+      });
+      return;
+    }
     switch (ev.event_type) {
       case 'prompt':
         closeAllBlocks();

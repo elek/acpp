@@ -57,6 +57,24 @@ rl.on('line', (line) => {
           },
         },
       });
+      // Stream a usage_update mid-turn (before any prompt response). This is the
+      // window the Session Info panel's live cost/context refresh must observe:
+      // the figures reach the browser over the WebSocket while the turn is still
+      // in progress and the DB row is not yet flushed. Round numbers keep the
+      // rendered "50K / 200K", "25% used" and "$0.4200" assertions deterministic.
+      write({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: SESSION_ID,
+          update: {
+            sessionUpdate: 'usage_update',
+            size: 200000,
+            used: 50000,
+            cost: { amount: 0.42, currency: 'USD' },
+          },
+        },
+      });
       // (no result for `id`)
       break;
     default:
