@@ -62,6 +62,10 @@
   .status-error { background: #fee2e2; color: #991b1b; }
   .status-pending { background: #fef9c3; color: #854d0e; }
   .session-bar-spacer { flex: 1; }
+  /* The Stop form is always in the DOM so an in-place session swap can reveal it
+     without a reload; `stop-form-off` is how it stays out of sight until then. */
+  .stop-form { display: inline; margin: 0; }
+  .stop-form.stop-form-off { display: none; }
   .stop-btn { display: inline-flex; align-items: center; gap: 0.375em; background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; padding: 0.3em 0.75em; border-radius: 8px; font-size: 0.75em; font-weight: 600; cursor: pointer; transition: background 0.15s; }
   .stop-btn:hover { background: #fee2e2; }
   .stop-btn:disabled { cursor: default; opacity: 0.7; }
@@ -241,13 +245,12 @@
       <a href="/projects?project={{.ActiveProject}}&session={{.ActiveSession.ID}}&view=meta" class="session-link" id="meta-link">meta</a>
       {{end}}
       <div class="session-bar-spacer"></div>
-      {{if .ActiveSession}}
-      {{if or (eq .ActiveSession.Status "running") (eq .ActiveSession.Status "pending")}}
-      <form id="stop-form" method="POST" action="/session/{{.ActiveSession.ID}}/stop" style="display:inline;margin:0">
+      <!-- Rendered even with no session (hidden): a session started in place —
+           the first prompt on a fresh project, or the "new" button — reveals and
+           re-targets this form client-side, with no reload. -->
+      <form id="stop-form" class="stop-form{{if not .ActiveRunning}} stop-form-off{{end}}" method="POST" action="/session/{{.ActiveSessionID}}/stop">
         <button type="submit" class="stop-btn" id="stop-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg><span class="btn-label">Stop</span></button>
       </form>
-      {{end}}
-      {{end}}
       {{if .CreatorEnabled}}
       <button type="button" class="new-btn" id="new-conversation-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg><span class="btn-label">new</span></button>
       {{end}}
@@ -317,7 +320,7 @@
       </div>
       <div class="info-row">
         <div class="info-row-label">Cost</div>
-        <div class="info-row-value info-cost">${{printf "%.4f" .ActiveSession.CostUSD}}</div>
+        <div class="info-row-value info-cost" id="info-cost">${{printf "%.4f" .ActiveSession.CostUSD}}</div>
       </div>
       <div class="info-row">
         <div class="info-row-label">Model</div>
@@ -334,10 +337,10 @@
       <div class="info-ctx">
         <div class="info-ctx-head">
           <span class="info-ctx-label">Context Window</span>
-          <span class="info-ctx-count">{{humanTokens .ContextUsed}} / {{humanTokens .ContextWindow}}</span>
+          <span class="info-ctx-count" id="info-ctx-count">{{humanTokens .ContextUsed}} / {{humanTokens .ContextWindow}}</span>
         </div>
-        <div class="info-ctx-track"><div class="info-ctx-fill" style="width: {{.ContextPct}}%"></div></div>
-        <div class="info-ctx-pct">{{.ContextPct}}% used</div>
+        <div class="info-ctx-track"><div class="info-ctx-fill" id="info-ctx-fill" style="width: {{.ContextPct}}%"></div></div>
+        <div class="info-ctx-pct" id="info-ctx-pct">{{.ContextPct}}% used</div>
       </div>
     </aside>
     {{end}}
@@ -411,7 +414,7 @@
   var activeProject = '{{.ActiveProject}}';
   var activeDir = '{{.ActiveDir}}';
   var sessionId = '{{.ActiveSessionID}}';
-  var isSessionRunning = {{if .ActiveSession}}('{{.ActiveSession.Status}}' === 'running' || '{{.ActiveSession.Status}}' === 'pending'){{else}}false{{end}};
+  var isSessionRunning = {{if .ActiveRunning}}true{{else}}false{{end}};
   var creatorEnabled = {{if .CreatorEnabled}}true{{else}}false{{end}};
   var container = document.getElementById('conversation');
   var ws = null;
@@ -435,6 +438,47 @@
     infoPanel.style.display = open ? "" : "none";
     infoBtn.classList.toggle("active", open);
     try { localStorage.setItem("acpp.sessionInfoOpen", open ? "1" : "0"); } catch (e) {}
+    // Opening the panel pulls the authoritative cost/context from the API so the
+    // figures are fresh even for a finished session (no live socket) or after any
+    // streamed usage_update was missed.
+    if (open) refreshSessionInfo();
+  }
+  // humanTokens mirrors the Go template helper of the same name so live updates
+  // format identically to the server-rendered values.
+  function humanTokens(v) {
+    v = v || 0;
+    if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+    if (v >= 1000) return (v % 1000 === 0) ? (v / 1000) + 'K' : (v / 1000).toFixed(1) + 'K';
+    return String(v);
+  }
+  // applySessionInfo patches the Session Info panel's cost and context-window
+  // figures in place. Fields are updated only when present so a partial payload
+  // (e.g. a usage_update without cost) never blanks a known value.
+  function applySessionInfo(info) {
+    if (!infoPanel || !info) return;
+    if (typeof info.cost_usd === 'number') {
+      var costEl = document.getElementById('info-cost');
+      if (costEl) costEl.textContent = '$' + info.cost_usd.toFixed(4);
+    }
+    var used = info.context_used || 0;
+    var win = info.context_window || 0;
+    if (used || win) {
+      var countEl = document.getElementById('info-ctx-count');
+      if (countEl) countEl.textContent = humanTokens(used) + ' / ' + humanTokens(win);
+      var pct = win > 0 ? Math.min(100, Math.floor(used * 100 / win)) : 0;
+      var fillEl = document.getElementById('info-ctx-fill');
+      if (fillEl) fillEl.style.width = pct + '%';
+      var pctEl = document.getElementById('info-ctx-pct');
+      if (pctEl) pctEl.textContent = pct + '% used';
+    }
+  }
+  // refreshSessionInfo fetches the authoritative session telemetry from the API.
+  function refreshSessionInfo() {
+    if (!infoPanel || !sessionId) return;
+    fetch('/api/session/' + encodeURIComponent(sessionId))
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(info) { if (info) applySessionInfo(info); })
+      .catch(function() { /* transient; the panel keeps its last-known values */ });
   }
   if (infoBtn && infoPanel) {
     var infoOpen = false;
@@ -657,6 +701,18 @@
 
   function appendEvent(ev) {
     var p = ev.payload;
+    // Usage updates (streamed live during a run, and replayed from history) carry
+    // no conversation content: they only refresh the Session Info panel's cost and
+    // context-window figures. Older persisted rows are typed "unknown", so key off
+    // the payload tag rather than the event_type alone.
+    if (p && p.sessionUpdate === 'usage_update') {
+      applySessionInfo({
+        context_used: p.used,
+        context_window: p.size,
+        cost_usd: (p.cost && typeof p.cost.amount === 'number') ? p.cost.amount : undefined
+      });
+      return;
+    }
     switch (ev.event_type) {
       case 'prompt':
         closeAllBlocks();
@@ -893,18 +949,43 @@
     }
   }
 
-  // updatePromptBarMode reflects the session state in the prompt bar. When a
-  // session exists but is no longer running (e.g. it was finished/stopped) the
-  // whole prompt bar is hidden: there is no more sending on a finished session,
-  // and the "+ new" button in the session bar is how you start a fresh one.
-  // With no session (fresh project) or a running session, the bar is shown with
-  // Send so a prompt can be sent (creating a session if none).
+  // updateStopButton points the Stop form at the session currently on screen and
+  // shows it only while that session can still be stopped. The form is always in
+  // the DOM — the server may have rendered the page with no session at all — so a
+  // session started in place (first prompt on a fresh project, the "new" button,
+  // /clear) gets a working Stop button without a reload.
+  var stopFormEl = document.getElementById('stop-form');
+  function updateStopButton() {
+    if (!stopFormEl) return;
+    var canStop = !!(sessionId && isSessionRunning);
+    if (canStop) {
+      stopFormEl.action = '/session/' + encodeURIComponent(sessionId) + '/stop';
+      // A previous session may have left the button mid-stop; reset it so it is
+      // usable for this one.
+      var stopBtn = document.getElementById('stop-btn');
+      if (stopBtn) {
+        stopBtn.disabled = false;
+        var stopLabel = stopBtn.querySelector('.btn-label');
+        if (stopLabel) stopLabel.textContent = 'Stop';
+      }
+    }
+    stopFormEl.classList.toggle('stop-form-off', !canStop);
+  }
+
+  // updatePromptBarMode reflects the session state in the prompt bar and the
+  // session-bar controls that track it. When a session exists but is no longer
+  // running (e.g. it was finished/stopped) the whole prompt bar is hidden: there
+  // is no more sending on a finished session, and the "+ new" button in the
+  // session bar is how you start a fresh one. With no session (fresh project) or
+  // a running session, the bar is shown with Send so a prompt can be sent
+  // (creating a session if none).
   var promptBarEl = document.getElementById('prompt-bar');
   function updatePromptBarMode() {
     var stopped = !!(sessionId && !isSessionRunning);
     if (promptBarEl) promptBarEl.style.display = stopped ? 'none' : '';
     if (btn) btn.style.display = stopped ? 'none' : '';
     updateCancelButton();
+    updateStopButton();
   }
   updatePromptBarMode();
 
@@ -914,8 +995,6 @@
   // and prompt bar and repaints the status pill. Idempotent.
   function finalizeSession(statusText, cls) {
     isSessionRunning = false;
-    var stopForm = document.getElementById('stop-form');
-    if (stopForm) stopForm.style.display = 'none';
     var statusEl = document.querySelector('.session-bar .session-status');
     if (statusEl) {
       statusEl.className = 'session-status ' + cls;
@@ -1034,6 +1113,9 @@
             if (data.new_session_id) {
               var oldId = sessionId;
               sessionId = data.new_session_id;
+              // Re-point the session-bar controls (Stop, Cancel) at the
+              // replacement session.
+              updatePromptBarMode();
 
               // Reset rendering state
               assistantText = '';
@@ -1224,14 +1306,13 @@
     // Stopping ends the session. Drive the prompt-bar state from the click
     // directly (rather than a full-page reload that races the server-side status
     // finalization): hide the Stop button and the prompt bar.
-    var stopForm = document.getElementById('stop-form');
-    if (stopForm) {
-      stopForm.addEventListener('submit', function(e) {
+    if (stopFormEl) {
+      stopFormEl.addEventListener('submit', function(e) {
         e.preventDefault();
         var stopBtn = document.getElementById('stop-btn');
         var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
         if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
-        fetch(stopForm.action, { method: 'POST' }).then(function() {
+        fetch(stopFormEl.action, { method: 'POST' }).then(function() {
           finalizeSession('stopped', 'status-complete');
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);

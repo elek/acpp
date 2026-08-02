@@ -10,6 +10,7 @@ export class ProjectPage {
   readonly cancelButton: Locator;
   readonly newConversationButton: Locator;
   readonly stopButton: Locator;
+  readonly stopForm: Locator;
   readonly sessionStatus: Locator;
   readonly sessionSelect: Locator;
   readonly conversation: Locator;
@@ -29,6 +30,12 @@ export class ProjectPage {
   readonly newProjectError: Locator;
   readonly projectTabs: Locator;
   readonly projectTitle: Locator;
+  readonly infoButton: Locator;
+  readonly infoPanel: Locator;
+  readonly infoClose: Locator;
+  readonly infoCost: Locator;
+  readonly infoContextCount: Locator;
+  readonly infoContextPct: Locator;
 
   constructor(private readonly page: Page) {
     this.promptInput = page.locator('#prompt-input');
@@ -43,6 +50,9 @@ export class ProjectPage {
     // to start a fresh session.
     this.newConversationButton = page.locator('#new-conversation-btn');
     this.stopButton = page.locator('#stop-btn');
+    // The Stop button's form — its `action` must always point at the session
+    // currently on screen, which matters when a session is swapped in-place.
+    this.stopForm = page.locator('#stop-form');
     this.sessionStatus = page.locator('.session-bar .session-status');
     this.sessionSelect = page.locator('#session-select');
     this.conversation = page.locator('#conversation');
@@ -61,6 +71,23 @@ export class ProjectPage {
     this.newProjectError = page.locator('#np-error');
     this.projectTabs = page.locator('.taskbar .taskbar-tab-name');
     this.projectTitle = page.locator('.session-bar .project-title');
+    // Session Info side panel: the toggle in the session bar, the panel itself and
+    // its live cost / context-window figures.
+    this.infoButton = page.locator('#info-btn');
+    this.infoPanel = page.locator('#session-info');
+    this.infoClose = page.locator('#info-close');
+    this.infoCost = page.locator('#info-cost');
+    this.infoContextCount = page.locator('#info-ctx-count');
+    this.infoContextPct = page.locator('#info-ctx-pct');
+  }
+
+  // openInfoPanel clicks the session-bar info toggle and waits for the panel to
+  // become visible. Opening also triggers an authoritative /api refresh, but the
+  // live-streamed usage_update is what these tests assert against.
+  async openInfoPanel(): Promise<void> {
+    if (await this.infoPanel.isVisible()) return;
+    await this.infoButton.click();
+    await expect(this.infoPanel).toBeVisible();
   }
 
   async goto(project: string): Promise<void> {

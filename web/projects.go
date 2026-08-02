@@ -214,6 +214,9 @@ func (s *Server) viewProjects(c echo.Context) error {
 		"ActiveDir":       activeDir,
 		"ActiveSessionID": "",
 		"ActiveSession":   nil,
+		// Whether the active session's turn can still be stopped. Drives both the
+		// initial Stop-button state and the client's isSessionRunning flag.
+		"ActiveRunning":   false,
 		"Sessions":        nil,
 		"CreatorEnabled":  s.creator != nil,
 		"ProjectsEnabled": s.projects != nil,
@@ -248,6 +251,7 @@ func (s *Server) viewProjects(c echo.Context) error {
 			for _, sess := range sessions {
 				if sess.ID == activeSessionID {
 					data["ActiveSession"] = &sess
+					data["ActiveRunning"] = sess.Status == "running" || sess.Status == "pending"
 					used := contextUsed(sess)
 					window := contextWindow(sess)
 					pct := 0

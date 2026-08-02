@@ -841,6 +841,8 @@ func ClassifyEvent(event acp.SessionUpdate) string {
 		return "tool_call_update"
 	case event.Plan != nil:
 		return "plan"
+	case event.UsageUpdate != nil:
+		return "usage_update"
 	default:
 		return "unknown"
 	}
