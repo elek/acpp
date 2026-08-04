@@ -306,6 +306,7 @@ func (s *PostgresStore) GetSession(ctx context.Context, id string) (SessionRow, 
 		&r.ID, &r.SourceName, &r.Agent, &r.Dir, &r.Sandbox, &r.Node, &r.GitCommit, &r.ProjectName, &r.Env,
 		&r.Status, &r.ErrorMsg, &r.Model, &r.SDKVersion, &r.PID,
 		&r.InputTokens, &r.OutputTokens, &r.CacheCreationInputTokens, &r.CacheReadInputTokens,
+		&r.ContextUsed, &r.ContextWindow,
 		&r.CostUSD, &r.PromptCount, &r.PromptDurationMs, &r.CreatedAt, &r.FinishedAt,
 	)
 	if err != nil {
