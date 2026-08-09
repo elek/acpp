@@ -328,6 +328,46 @@ func TestSessionContextFallsBackWhenNoUsageUpdate(t *testing.T) {
 	}
 }
 
+// TestSessionContextZeroBeforeACPHandshake pins the pre-ACP-handshake state: a
+// freshly inserted session (no model chosen yet, status=pending) must report a
+// zero context window, not the misleading per-model default (e.g. "0 / 200K")
+// that suggests a model-sized context is already in play.
+func TestSessionContextZeroBeforeACPHandshake(t *testing.T) {
+	store := db.NewMemStore()
+	ctx := context.Background()
+	dir := "/tmp/does-not-exist/acpp"
+	if err := store.SetProjectField(ctx, "acpp", "dir", dir); err != nil {
+		t.Fatal(err)
+	}
+	// InsertSession only — no UpdateSession, mirroring the state between web
+	// createSession returning and the persister's first beginTurn flush.
+	if err := store.InsertSession(ctx, "fresh", "web", "claude", dir, "", "", "", "acpp", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store, ":0").WithProjects(store)
+	rec := doGet(t, s, "/api/session/fresh")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var sess SessionJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if sess.Model != "" {
+		t.Errorf("model = %q, want empty (no ACP handshake yet)", sess.Model)
+	}
+	if sess.ContextUsed != 0 {
+		t.Errorf("context_used = %d, want 0", sess.ContextUsed)
+	}
+	if sess.ContextWindow != 0 {
+		t.Errorf("context_window = %d, want 0 (model unknown → no per-model fallback)", sess.ContextWindow)
+	}
+	if sess.CostUSD != nil {
+		t.Errorf("cost_usd = %v, want nil (unknown)", sess.CostUSD)
+	}
+}
+
 func TestMapStatus(t *testing.T) {
 	cases := map[string]string{
 		"running":  "running",

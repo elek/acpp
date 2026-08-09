@@ -222,10 +222,16 @@ func contextUsed(r db.SessionRow) int64 {
 }
 
 // contextWindow returns the model's total context window: the agent-reported
-// size when present, else a per-model fallback.
+// size when present, else a per-model fallback. Returns 0 for a session whose
+// ACP handshake has not yet populated Model — the panel then reads "0 / 0"
+// instead of the misleading per-model default (e.g. "0 / 200K") for a session
+// that has no model chosen yet.
 func contextWindow(r db.SessionRow) int64 {
 	if r.ContextWindow > 0 {
 		return r.ContextWindow
+	}
+	if r.Model == "" {
+		return 0
 	}
 	return contextWindowForModel(r.Model)
 }
