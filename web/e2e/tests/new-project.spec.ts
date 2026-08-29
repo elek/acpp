@@ -3,8 +3,8 @@ import { ProjectPage } from '../pages/ProjectPage';
 
 // The /projects bottom tab bar offers a "+" button that opens a modal to create
 // a new project. Creating one with a name (and an explicit directory) persists a
-// project row, navigates to its view, and lists it in the tab bar — all without
-// starting a session.
+// project row, navigates to its view — which opens on a freshly started pending
+// session — and lists it in the tab bar.
 test('new-project button creates a project and navigates to it', async ({
   page,
   tempProject,
