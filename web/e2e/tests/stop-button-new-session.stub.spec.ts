@@ -12,11 +12,11 @@ import { ProjectPage } from '../pages/ProjectPage';
 // almost immediately and legitimately hide the Stop button again, racing every
 // assertion here.
 
-// Scenario the user hits on a fresh project: no session exists, so the server
-// renders no Stop button at all. Submitting the first prompt creates a session
-// in-place and the button must show up right away — before the fix it appeared
-// only after a manual reload.
-test('the Stop button appears when the first prompt starts a new session', async ({
+// Scenario the user hits on a fresh project: opening a project with nothing
+// open lands on a freshly started pending session, so the Stop button is live
+// from the first paint and the first prompt runs on that session rather than
+// swapping in another one.
+test('the Stop button is live on the pending session a fresh project opens on', async ({
   page,
   tempProject,
 }) => {
@@ -24,8 +24,12 @@ test('the Stop button appears when the first prompt starts a new session', async
   await project.gotoProjects();
   await project.createProject(tempProject.name, tempProject.dir);
 
-  // No session yet: there is nothing to stop.
-  await expect(project.stopButton).toBeHidden();
+  // Opening the project started a pending session and pinned it in the URL.
+  await expect
+    .poll(() => project.currentSessionId(), { timeout: 30_000 })
+    .not.toBeNull();
+  const sessionId = project.currentSessionId();
+  await expect(project.stopButton).toBeVisible();
 
   await project.send('Do some slow work.');
 
@@ -34,12 +38,10 @@ test('the Stop button appears when the first prompt starts a new session', async
     timeout: 30_000,
   });
 
-  // The discriminating assertion: visible with no reload in between.
+  // The turn runs on the session the project opened on — no second session was
+  // created behind it — and the button still targets it.
   await expect(project.stopButton).toBeVisible();
-
-  // And it targets the session that was just created, not a stale one.
-  const sessionId = project.currentSessionId();
-  expect(sessionId).toBeTruthy();
+  expect(project.currentSessionId()).toBe(sessionId);
   await expect(project.stopForm).toHaveAttribute(
     'action',
     `/session/${sessionId}/stop`,

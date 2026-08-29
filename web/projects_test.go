@@ -3,12 +3,15 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/elek/acpp/db"
+	acplib "github.com/elek/acpp/types"
 )
 
 func doPostJSON(t *testing.T, s *Server, path, body string) *httptest.ResponseRecorder {
@@ -248,6 +251,146 @@ func TestViewTaskbarFragment(t *testing.T) {
 	}
 	if strings.Contains(body, "session=s2") {
 		t.Errorf("completed session s2 should be filtered out of the taskbar:\n%s", body)
+	}
+}
+
+// fakeCreator stands in for the WebChannel: it mints session ids and writes the
+// rows the persistence subscriber would, so the view sees the new session on the
+// next request.
+type fakeCreator struct {
+	store   *db.MemStore
+	started []string
+	failed  []string
+}
+
+func (f *fakeCreator) StartSessionWeb(dir, agent, sandbox, sandboxProfiles, projectName string) (string, error) {
+	id := fmt.Sprintf("new%d", len(f.started)+1)
+	f.started = append(f.started, id)
+	err := f.store.InsertSession(context.Background(), id, "web", agent, dir, sandbox, "", "", projectName, nil, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (f *fakeCreator) StartFailedSessionWeb(dir, projectName, errMsg string) string {
+	id := fmt.Sprintf("failed%d", len(f.failed)+1)
+	f.failed = append(f.failed, id)
+	return id
+}
+
+// closeAllSessions finishes every session in the store, leaving the project with
+// history but nothing open.
+func closeAllSessions(t *testing.T, store *db.MemStore) {
+	t.Helper()
+	ctx := context.Background()
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sess := range sessions {
+		if err := store.FinishSession(ctx, sess.ID, acplib.StatusInfo{Status: acplib.StatusComplete}, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestViewProjectsStartsPendingSessionWhenNoneOpen(t *testing.T) {
+	store := seedStore(t)
+	closeAllSessions(t, store)
+	creator := &fakeCreator{store: store}
+	s := New(store, ":0").WithProjects(store).WithCreator(creator)
+
+	rec := doGet(t, s, "/projects?project=acpp")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 1 {
+		t.Fatalf("started %d sessions, want 1", len(creator.started))
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "session=new1") || !strings.Contains(loc, "project=acpp") {
+		t.Fatalf("redirect location = %q, want the new session on the project", loc)
+	}
+
+	// The new session is pending, so following the redirect opens it instead of
+	// the finished history — and does not start yet another one.
+	rec = doGet(t, s, loc)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 1 {
+		t.Fatalf("started %d sessions after following the redirect, want 1", len(creator.started))
+	}
+
+	// A later open of the project with no session in the URL reuses the pending
+	// session rather than stacking up another.
+	rec = doGet(t, s, "/projects?project=acpp")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (pending session reused): %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 1 {
+		t.Fatalf("started %d sessions on reopen, want 1", len(creator.started))
+	}
+}
+
+func TestViewProjectsKeepsOpenSession(t *testing.T) {
+	store := seedStore(t)
+	creator := &fakeCreator{store: store}
+	s := New(store, ":0").WithProjects(store).WithCreator(creator)
+
+	// s1 is running: it is opened as-is, no new session.
+	rec := doGet(t, s, "/projects?project=acpp")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 0 {
+		t.Fatalf("started %d sessions, want 0 while one is open", len(creator.started))
+	}
+
+	// An explicitly requested closed session still opens, even with none running.
+	closeAllSessions(t, store)
+	rec = doGet(t, s, "/projects?project=acpp&session=s2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 0 {
+		t.Fatalf("started %d sessions, want 0 for an explicit session", len(creator.started))
+	}
+}
+
+func TestViewProjectsFallsBackToLatestWithoutCreator(t *testing.T) {
+	store := seedStore(t)
+	closeAllSessions(t, store)
+	s := New(store, ":0").WithProjects(store)
+
+	rec := doGet(t, s, "/projects?project=acpp")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// Without a creator there is nothing to start, so the most recent session
+	// (s1, created last) is shown as before.
+	if !strings.Contains(rec.Body.String(), `id="session-info"`) {
+		t.Errorf("latest session should still be opened when sessions cannot be created")
+	}
+}
+
+func TestViewProjectsNoPendingSessionWithoutDir(t *testing.T) {
+	store := db.NewMemStore()
+	if err := store.SetProjectField(context.Background(), "ghost", "agent", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	creator := &fakeCreator{store: store}
+	s := New(store, ":0").WithProjects(store).WithCreator(creator)
+
+	// The project has no dir and nothing resolves it: opening it must not start a
+	// session, and must not mint a stillborn failed one on every page load.
+	rec := doGet(t, s, "/projects?project=ghost")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if len(creator.started) != 0 || len(creator.failed) != 0 {
+		t.Fatalf("started %d and failed %d sessions, want none", len(creator.started), len(creator.failed))
 	}
 }
 

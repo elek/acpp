@@ -178,6 +178,40 @@ func (s *Server) viewTaskbar(c echo.Context) error {
 	})
 }
 
+// resolveSessionDir returns the working directory a new session for this
+// project should run in: the explicit dir when one is known, otherwise the
+// directory found by name in the search paths. The second result is false when
+// neither is available.
+func (s *Server) resolveSessionDir(projectName, dir string) (string, bool) {
+	if dir != "" {
+		return dir, true
+	}
+	return config.FindProjectDir(s.searchPaths, projectName)
+}
+
+// startPendingSession creates a fresh, prompt-less session for the project so
+// opening it lands on new work instead of finished history. It returns "" when
+// no session could be started, in which case the caller falls back to the
+// project's existing sessions. Unlike createProjectSession this never records a
+// stillborn failed conversation: page loads are not an explicit user action, and
+// an unresolvable directory would otherwise mint a new errored session on every
+// visit.
+func (s *Server) startPendingSession(projectName, dir string) string {
+	if s.creator == nil {
+		return ""
+	}
+	resolved, ok := s.resolveSessionDir(projectName, dir)
+	if !ok {
+		return ""
+	}
+	id, err := s.creator.StartSessionWeb(resolved, s.defaults.Agent, s.defaults.Sandbox, "", projectName)
+	if err != nil {
+		slog.Error("web: start pending session on project open", "project", projectName, "error", err)
+		return ""
+	}
+	return id
+}
+
 func (s *Server) viewProjects(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -195,6 +229,46 @@ func (s *Server) viewProjects(c echo.Context) error {
 		if p.Name == activeProject {
 			activeDir = p.Dir
 			break
+		}
+	}
+
+	// Resolve which of the project's sessions this page shows, before anything
+	// else is built: when none is open the resolution starts a new session and
+	// redirects, making the rest of the work here moot.
+	var sessions []db.SessionRow
+	if activeProject != "" {
+		sessions, err = s.store.ListSessionsByProject(ctx, activeProject)
+		if err != nil {
+			return err
+		}
+
+		// If no session was specified, prefer an open one.
+		if activeSessionID == "" {
+			for _, sess := range sessions {
+				if sess.Status == "running" || sess.Status == "pending" {
+					activeSessionID = sess.ID
+					break
+				}
+			}
+		}
+
+		// Nothing open: start a fresh pending session and land on that rather
+		// than re-opening finished history. The new session is itself pending, so
+		// the next open of this project picks it up above instead of stacking up
+		// another one. Redirecting pins the id in the URL, keeping a reload from
+		// starting yet another session.
+		if activeSessionID == "" {
+			if id := s.startPendingSession(activeProject, activeDir); id != "" {
+				q := c.Request().URL.Query()
+				q.Set("session", id)
+				return c.Redirect(http.StatusSeeOther, "/projects?"+q.Encode())
+			}
+		}
+
+		// No session could be started (session creation is unavailable or the
+		// project's directory is unknown): fall back to the most recent session.
+		if activeSessionID == "" && len(sessions) > 0 {
+			activeSessionID = sessions[0].ID
 		}
 	}
 
@@ -217,67 +291,45 @@ func (s *Server) viewProjects(c echo.Context) error {
 		// Whether the active session's turn can still be stopped. Drives both the
 		// initial Stop-button state and the client's isSessionRunning flag.
 		"ActiveRunning":   false,
-		"Sessions":        nil,
+		"Sessions":        sessions,
 		"CreatorEnabled":  s.creator != nil,
 		"ProjectsEnabled": s.projects != nil,
 		"Defaults":        s.defaults,
 	}
 
-	if activeProject != "" {
-		sessions, err := s.store.ListSessionsByProject(ctx, activeProject)
-		if err != nil {
-			return err
-		}
-		data["Sessions"] = sessions
+	if activeSessionID != "" {
+		data["ActiveSessionID"] = activeSessionID
 
-		if len(sessions) > 0 {
-			// If no session specified, pick the latest running or the most recent one
-			if activeSessionID == "" {
-				// Prefer a running session
-				for _, sess := range sessions {
-					if sess.Status == "running" || sess.Status == "pending" {
-						activeSessionID = sess.ID
-						break
+		// Find the active session object
+		for _, sess := range sessions {
+			if sess.ID == activeSessionID {
+				data["ActiveSession"] = &sess
+				data["ActiveRunning"] = sess.Status == "running" || sess.Status == "pending"
+				used := contextUsed(sess)
+				window := contextWindow(sess)
+				pct := 0
+				if window > 0 {
+					pct = int(used * 100 / window)
+					if pct > 100 {
+						pct = 100
 					}
 				}
-				// Otherwise pick the most recent
-				if activeSessionID == "" {
-					activeSessionID = sessions[0].ID
-				}
-			}
-			data["ActiveSessionID"] = activeSessionID
-
-			// Find the active session object
-			for _, sess := range sessions {
-				if sess.ID == activeSessionID {
-					data["ActiveSession"] = &sess
-					data["ActiveRunning"] = sess.Status == "running" || sess.Status == "pending"
-					used := contextUsed(sess)
-					window := contextWindow(sess)
-					pct := 0
-					if window > 0 {
-						pct = int(used * 100 / window)
-						if pct > 100 {
-							pct = 100
+				data["ContextUsed"] = used
+				data["ContextWindow"] = window
+				data["ContextPct"] = pct
+				// The session row records the resolved sandbox type. Profiles
+				// are not persisted per-session, so fall back to the project's
+				// configured sandbox/profiles as the best available proxy.
+				data["ActiveSandbox"] = sess.Sandbox
+				if s.projects != nil {
+					if p, err := s.projects.GetProject(ctx, activeProject); err == nil {
+						data["ActiveProfiles"] = p.SandboxProfiles
+						if sess.Sandbox == "" {
+							data["ActiveSandbox"] = p.Sandbox
 						}
 					}
-					data["ContextUsed"] = used
-					data["ContextWindow"] = window
-					data["ContextPct"] = pct
-					// The session row records the resolved sandbox type. Profiles
-					// are not persisted per-session, so fall back to the project's
-					// configured sandbox/profiles as the best available proxy.
-					data["ActiveSandbox"] = sess.Sandbox
-					if s.projects != nil {
-						if p, err := s.projects.GetProject(ctx, activeProject); err == nil {
-							data["ActiveProfiles"] = p.SandboxProfiles
-							if sess.Sandbox == "" {
-								data["ActiveSandbox"] = p.Sandbox
-							}
-						}
-					}
-					break
 				}
+				break
 			}
 		}
 	}
@@ -407,16 +459,14 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		projectName = "default"
 	}
 
-	if dir == "" {
-		if resolved, ok := config.FindProjectDir(s.searchPaths, projectName); ok {
-			dir = resolved
-		} else {
-			// No directory could be found: record a stillborn conversation carrying
-			// the failure so the frontend can open its window and show what happened.
-			msg := fmt.Sprintf("Could not start a session: no directory named %q found in the search paths. Set the project's directory or add its parent to search_path.", projectName)
-			id := s.creator.StartFailedSessionWeb(dir, projectName, msg)
-			return c.JSON(http.StatusCreated, map[string]string{"id": id, "dir": "", "failed": "true"})
-		}
+	if resolved, ok := s.resolveSessionDir(projectName, dir); ok {
+		dir = resolved
+	} else {
+		// No directory could be found: record a stillborn conversation carrying
+		// the failure so the frontend can open its window and show what happened.
+		msg := fmt.Sprintf("Could not start a session: no directory named %q found in the search paths. Set the project's directory or add its parent to search_path.", projectName)
+		id := s.creator.StartFailedSessionWeb(dir, projectName, msg)
+		return c.JSON(http.StatusCreated, map[string]string{"id": id, "dir": "", "failed": "true"})
 	}
 
 	sessionID, err := s.creator.StartSessionWeb(dir, s.defaults.Agent, s.defaults.Sandbox, "", projectName)
