@@ -201,6 +201,55 @@ func checkListDir(t *Transcript) []Result {
 	return []Result{{Name: "conversation: list-dir", OK: ok, Value: value}}
 }
 
+// checkResume reports the session-resume phase: whether session/load was accepted
+// at all, whether the agent replayed the prior conversation while handling it, and
+// whether the resumed session could answer a question that only the first
+// session's context can answer.
+func checkResume(t *Transcript) []Result {
+	loaded := Result{Name: "session resume: load", OK: false, Value: "—"}
+	replayed := Result{Name: "session resume: history replayed", OK: false, Value: "—"}
+	recall := Result{Name: "session resume: recall", OK: false, Value: "—"}
+
+	switch {
+	case t.ResumeSkipped != "":
+		for _, res := range []*Result{&loaded, &replayed, &recall} {
+			res.Value = "skipped: " + t.ResumeSkipped
+		}
+		return []Result{loaded, replayed, recall}
+	case t.ResumeErr != "":
+		loaded.Value = truncate(snippet(t.ResumeErr), 60)
+		return []Result{loaded, replayed, recall}
+	}
+
+	loaded.OK = true
+	loaded.Value = "ok"
+
+	if sink := t.Turns["resume-replay"]; sink != nil {
+		n := len(strings.Fields(sink.Text))
+		replayed.OK = n > 0
+		if n > 0 {
+			replayed.Value = fmt.Sprintf("%d word(s)", n)
+		} else {
+			replayed.Value = "none"
+		}
+	}
+
+	turn := t.Turns["recall"]
+	if turn == nil {
+		recall.Value = "not run"
+		return []Result{loaded, replayed, recall}
+	}
+	// Case-insensitive: agents reproduce the token faithfully but may normalise its
+	// casing, and the token's randomness — not its case — is what makes the match
+	// meaningful.
+	recall.OK = t.Secret != "" && strings.Contains(strings.ToLower(turn.Text), strings.ToLower(t.Secret))
+	recall.Value = truncate(snippet(turn.Text), 60)
+	if recall.OK {
+		recall.Value = t.Secret
+	}
+	return []Result{loaded, replayed, recall}
+}
+
 // snippet collapses whitespace in s into a single line.
 func snippet(s string) string {
 	return strings.Join(strings.Fields(s), " ")

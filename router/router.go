@@ -434,16 +434,22 @@ func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.R
 		state.acpInit = m
 		conn := state.connection
 		cwd := state.opts.CWD
+		resume := state.opts.ResumeSessionID
 		cid := state.meta.ConversationID
 		r.mu.Unlock()
 		if conn == nil {
 			return
 		}
-		if err := conn.Send(ctx, acp.NewSessionRequest{
-			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
-		}); err != nil {
-			slog.Error("router: send session/new", "conversation_id", cid, "error", err)
+		// A conversation created with ResumeSessionID picks up an existing ACP
+		// session (session/load) instead of minting a fresh one (session/new).
+		var req any = acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}}
+		method := "session/new"
+		if resume != "" {
+			req = acp.LoadSessionRequest{SessionId: resume, Cwd: cwd, McpServers: []acp.McpServer{}}
+			method = "session/load"
+		}
+		if err := conn.Send(ctx, req); err != nil {
+			slog.Error("router: send "+method, "conversation_id", cid, "error", err)
 		}
 		return
 	case acp.NewSessionResponse:
@@ -459,6 +465,22 @@ func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.R
 		// ACP session id by the time a caller resumes from WaitReady. The meta
 		// already carries the freshly assigned SessionID; subscribers needing the
 		// creation options fetch them via Router.Opts.
+		r.deliver(ctx, state, rid, meta, m)
+		if ready != nil {
+			close(ready)
+		}
+		return
+	case acp.LoadSessionResponse:
+		// session/load carries no session id in its response — the resumed session
+		// keeps the id we asked to load. Any history the agent replayed arrived as
+		// session/update notifications before this response, so subscribers have
+		// already seen it by the time ready is closed.
+		r.mu.Lock()
+		state.meta.SessionID = state.opts.ResumeSessionID
+		ready := state.ready
+		state.ready = nil
+		meta := state.meta
+		r.mu.Unlock()
 		r.deliver(ctx, state, rid, meta, m)
 		if ready != nil {
 			close(ready)
