@@ -31,6 +31,18 @@ type Transcript struct {
 	// list-dir check looks for it in the agent's answer.
 	ProbeFile string
 
+	// Secret is the unique token planted in the first session by the "memo" probe.
+	// The resume check looks for it in the answer the resumed session gives, which
+	// is only possible if the prior conversation's context was restored.
+	Secret string
+
+	// ResumeSkipped, when non-empty, explains why the resume phase did not run
+	// (e.g. the agent does not advertise the loadSession capability).
+	ResumeSkipped string
+	// ResumeErr, when non-empty, is the failure that stopped the resume phase
+	// (session/load rejected, handshake timeout, …).
+	ResumeErr string
+
 	Init     acp.InitializeResponse
 	Session  acp.NewSessionResponse
 	Commands []acp.AvailableCommand
@@ -63,14 +75,30 @@ func (t *Transcript) SetInit(init acp.InitializeResponse) {
 }
 
 // Begin marks tag as the active probe; subsequent turn-scoped updates (text,
-// tool calls, usage, stop reason) are attributed to it.
+// tool calls, usage, stop reason) are attributed to it, and the turn joins the
+// probe order that the turn-spanning checks iterate.
 func (t *Transcript) Begin(tag string) {
+	t.begin(tag, true)
+}
+
+// BeginSink is Begin for a bucket that is not a probe: it collects updates the
+// agent emits outside a prompt turn (the history a resuming agent replays while
+// answering session/load) so they are not misattributed to the preceding probe.
+// The turn stays out of Order, so checks that aggregate over probes — prompt
+// completion, tool usage — ignore it.
+func (t *Transcript) BeginSink(tag string) {
+	t.begin(tag, false)
+}
+
+func (t *Transcript) begin(tag string, probe bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.active = tag
 	if _, ok := t.Turns[tag]; !ok {
 		t.Turns[tag] = &Turn{Tag: tag}
-		t.Order = append(t.Order, tag)
+		if probe {
+			t.Order = append(t.Order, tag)
+		}
 	}
 }
 

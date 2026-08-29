@@ -41,6 +41,15 @@ type SessionOpts struct {
 	// hook uses this to expose the original repo read-write when it redirects a
 	// session's CWD to an isolated git worktree.
 	RWBinds []string
+	// ResumeSessionID, when set, makes Router.Create resume an existing ACP
+	// session instead of starting a fresh one: the handshake issues session/load
+	// with this id rather than session/new, so the agent restores the prior
+	// conversation's context (agents that support it replay the history as
+	// session/update notifications before answering the load). It requires the
+	// agent to advertise the loadSession capability, and the same CWD the session
+	// was created with. The conversation is still a new one on the router's side
+	// (fresh ConversationID and subprocess); only the ACP SessionID is reused.
+	ResumeSessionID acp.SessionId
 }
 
 // SessionEvent pairs a session update with the session ID that produced it.

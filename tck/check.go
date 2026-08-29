@@ -22,6 +22,7 @@ var checks = []Check{
 	checkToolUsage,
 	checkCapital,
 	checkListDir,
+	checkResume,
 }
 
 // RunChecks evaluates every registered check against the transcript and flattens
