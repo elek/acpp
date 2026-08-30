@@ -29,9 +29,11 @@ const DSNEnv = "ACPP_TEST_POSTGRES"
 // temporary directory to hold project working trees, and starts a router wired to
 // the database via the persistence subscriber.
 //
-// fn receives the temporary projects directory and the live router. All resources
-// are released via t.Cleanup when the test finishes.
-func WithRouter(t *testing.T, fn func(t *testing.T, dir string, r *router.Router)) {
+// fn receives the temporary projects directory, the live router, and the store —
+// the store so a test can seed per-project config (agent, sandbox, profiles,
+// hooks), which the router reads at Create time. All resources are released via
+// t.Cleanup when the test finishes.
+func WithRouter(t *testing.T, fn func(t *testing.T, dir string, r *router.Router, store db.Store)) {
 	t.Helper()
 
 	dsn := envOrSkip(t)
@@ -45,13 +47,15 @@ func WithRouter(t *testing.T, fn func(t *testing.T, dir string, r *router.Router
 
 	dir := t.TempDir()
 
-	r := router.New()
+	// WithProjects mirrors cli/serve.go: per-project config comes from the
+	// database, so tests exercise the same resolution path the real server does.
+	r := router.New(router.WithProjects(store))
 	t.Cleanup(r.Close)
 
 	// Wire database persistence; New subscribes the persister to the router.
 	persistence.New(r, store)
 
-	fn(t, dir, r)
+	fn(t, dir, r, store)
 }
 
 // envOrSkip returns the test DSN, or skips the test when it is not configured.

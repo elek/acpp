@@ -62,16 +62,7 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rw
 		return nil, fmt.Errorf("unknown sandbox type: %s", sandboxType)
 	}
 
-	// The user override (~/.config/acpp/bbwrap.yaml) is applied first, then any
-	// explicitly-passed configPaths take precedence over it.
-	overlays := configPaths
-	if userPath := userConfigPath(); userPath != "" {
-		if _, err := os.Stat(userPath); err == nil {
-			overlays = append([]string{userPath}, configPaths...)
-		}
-	}
-
-	fragments, err := loadFragments(overlays...)
+	fragments, err := loadFragments(configOverlays(configPaths...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -89,19 +80,36 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rw
 	// Inject caller-supplied read-only binds as a synthetic profile so they are
 	// merged on top of the resolved base fragment (appended after its binds).
 	if len(roBinds) > 0 {
-		const syntheticName = "__robinds__"
-		fragments[syntheticName] = &BwrapConfig{ROBind: roBinds}
-		profileList = append(profileList, syntheticName)
+		fragments[roBindFragment] = &BwrapConfig{ROBind: roBinds}
+		profileList = append(profileList, roBindFragment)
 	}
 
 	// Read-write binds are the same, layered after the ro-binds.
 	if len(rwBinds) > 0 {
-		const syntheticName = "__rwbinds__"
-		fragments[syntheticName] = &BwrapConfig{Bind: rwBinds}
-		profileList = append(profileList, syntheticName)
+		fragments[rwBindFragment] = &BwrapConfig{Bind: rwBinds}
+		profileList = append(profileList, rwBindFragment)
 	}
 
-	return NewBwrapSandbox("sandbox", profileList, cwd, fragments)
+	return NewBwrapSandbox(rootFragment, profileList, cwd, fragments)
+}
+
+// roBindFragment and rwBindFragment are the synthetic fragment names used to
+// layer caller-supplied binds on top of the resolved profiles.
+const (
+	roBindFragment = "__robinds__"
+	rwBindFragment = "__rwbinds__"
+)
+
+// configOverlays returns the overlay paths to layer over the embedded config:
+// the user override (~/.config/acpp/bbwrap.yaml) first, then any explicitly
+// passed configPaths, which take precedence over it.
+func configOverlays(configPaths ...string) []string {
+	if userPath := userConfigPath(); userPath != "" {
+		if _, err := os.Stat(userPath); err == nil {
+			return append([]string{userPath}, configPaths...)
+		}
+	}
+	return configPaths
 }
 
 // loadFragments builds the bwrap fragment set. The embedded config is always

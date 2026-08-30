@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/hook"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
@@ -165,73 +164,131 @@ func TestDeliver_TriggerDeferredUntilAfterDelivery(t *testing.T) {
 		"the follow-up prompt must be fanned out only after the triggering message")
 }
 
-// --- resolveProject (centralized .acpp.yaml resolution) ---------------------
+// --- resolveProject (centralized project config resolution) -----------------
 
-func writeProject(t *testing.T, dir, content string) {
+// seedProject returns a router backed by an in-memory store carrying the given
+// project fields, plus the project name for SessionOpts.ProjectID.
+func seedProject(t *testing.T, cfg *config.Config, fields map[string]string) (*Router, string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, config.ProjectFile), []byte(content), 0o644))
+	store := db.NewMemStore()
+	const name = "widgets"
+	for field, value := range fields {
+		require.NoError(t, store.SetProjectField(context.Background(), name, field, value))
+	}
+	opts := []Option{WithProjects(store)}
+	if cfg != nil {
+		opts = append(opts, WithConfig(cfg))
+	}
+	return New(opts...), name
 }
 
-func TestResolveProject_CallerAgentUsedWithoutProjectFile(t *testing.T) {
-	rt := New(WithConfig(&config.Config{Defaults: config.Defaults{Agent: "default-agent"}}))
-	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "caller-agent"}
+func TestResolveProject_CallerAgentUsedWithoutStoredAgent(t *testing.T) {
+	rt, project := seedProject(t, &config.Config{Defaults: config.Defaults{Agent: "default-agent"}}, nil)
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "caller-agent"}
 
-	hooks, _, _, err := rt.resolveProject(&opts)
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Empty(t, hooks)
 	require.Equal(t, "caller-agent", opts.Agent)
 }
 
-func TestResolveProject_ProjectAgentOverridesCaller(t *testing.T) {
-	dir := t.TempDir()
-	writeProject(t, dir, "agent: project-agent\n")
+func TestResolveProject_StoredAgentOverridesCaller(t *testing.T) {
+	rt, project := seedProject(t, nil, map[string]string{"agent": "project-agent"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "caller-agent"}
 
-	rt := New()
-	opts := types.SessionOpts{CWD: dir, Agent: "caller-agent"}
-	_, _, _, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Equal(t, "project-agent", opts.Agent)
 }
 
 func TestResolveProject_FallsBackToConfigDefaultAgent(t *testing.T) {
-	rt := New(WithConfig(&config.Config{Defaults: config.Defaults{Agent: "default-agent"}}))
-	opts := types.SessionOpts{CWD: t.TempDir()}
+	rt, project := seedProject(t, &config.Config{Defaults: config.Defaults{Agent: "default-agent"}}, nil)
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project}
 
-	_, _, _, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Equal(t, "default-agent", opts.Agent)
 }
 
-func TestResolveProject_BuildsHooksFromProjectFile(t *testing.T) {
-	dir := t.TempDir()
-	writeProject(t, dir, "hooks:\n  - type: commit\n")
+// A router with no project store (acpp cat, acpp run) resolves from the caller's
+// opts and the global config alone.
+func TestResolveProject_NoProjectStore(t *testing.T) {
+	rt := New(WithConfig(&config.Config{Defaults: config.Defaults{Agent: "default-agent"}}))
+	t.Cleanup(rt.Close)
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: "widgets"}
 
-	rt := New()
-	opts := types.SessionOpts{CWD: dir, Agent: "x"}
-	hooks, _, _, err := rt.resolveProject(&opts)
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	require.NoError(t, err)
+	require.Empty(t, hooks)
+	require.Equal(t, "default-agent", opts.Agent)
+}
+
+// An empty ProjectID must not trigger a store lookup that would create a row
+// named "".
+func TestResolveProject_EmptyProjectIDSkipsLookup(t *testing.T) {
+	store := db.NewMemStore()
+	rt := New(WithProjects(store))
+	t.Cleanup(rt.Close)
+	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "caller-agent"}
+
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	require.NoError(t, err)
+	require.Equal(t, "caller-agent", opts.Agent)
+
+	projects, err := store.ListProjects(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, projects)
+}
+
+func TestResolveProject_BuildsHooksFromProjectRow(t *testing.T) {
+	rt, project := seedProject(t, nil, map[string]string{"hooks": "commit"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
+
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
+	require.IsType(t, &hook.CommitHook{}, hooks[0])
+}
+
+func TestResolveProject_BuildsParameterisedHookFromProjectRow(t *testing.T) {
+	rt, project := seedProject(t, nil, map[string]string{"hooks": "worktree:location=/tmp/wt"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
+
+	// That the location param actually reaches the hook is covered by
+	// hook.TestWorktreeHookRegistered, where the field is visible; here it is
+	// enough that the compact "type:key=value" syntax parses and builds.
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	require.NoError(t, err)
+	require.Len(t, hooks, 1)
+	require.IsType(t, &hook.WorktreeHook{}, hooks[0])
 }
 
 func TestResolveProject_UnknownHookTypeErrors(t *testing.T) {
-	dir := t.TempDir()
-	writeProject(t, dir, "hooks:\n  - type: does-not-exist\n")
+	rt, project := seedProject(t, nil, map[string]string{"hooks": "does-not-exist"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	rt := New()
-	opts := types.SessionOpts{CWD: dir, Agent: "x"}
-	_, _, _, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.Error(t, err)
 }
 
-// Global hooks from ~/.config/acpp/config.yaml apply to every conversation, even
-// a project with no .acpp.yaml of its own.
-func TestResolveProject_BuildsHooksFromGlobalConfig(t *testing.T) {
-	rt := New(WithConfig(&config.Config{
-		Hooks: []config.HookConfig{{Type: "worktree"}},
-	}))
-	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "x"}
+func TestResolveProject_MalformedHookListErrors(t *testing.T) {
+	rt, project := seedProject(t, nil, map[string]string{"hooks": "worktree:location"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	hooks, _, _, err := rt.resolveProject(&opts)
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hooks")
+}
+
+// Global hooks from ~/.config/acpp/config.yaml apply to every conversation, even
+// a project with no hooks of its own.
+func TestResolveProject_BuildsHooksFromGlobalConfig(t *testing.T) {
+	rt, project := seedProject(t, &config.Config{
+		Hooks: []config.HookConfig{{Type: "worktree"}},
+	}, nil)
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
+
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
 	require.IsType(t, &hook.WorktreeHook{}, hooks[0])
@@ -239,15 +296,12 @@ func TestResolveProject_BuildsHooksFromGlobalConfig(t *testing.T) {
 
 // Global and project hooks concatenate, global first then project.
 func TestResolveProject_GlobalAndProjectHooksConcatenate(t *testing.T) {
-	dir := t.TempDir()
-	writeProject(t, dir, "hooks:\n  - type: commit\n")
-
-	rt := New(WithConfig(&config.Config{
+	rt, project := seedProject(t, &config.Config{
 		Hooks: []config.HookConfig{{Type: "worktree"}},
-	}))
-	opts := types.SessionOpts{CWD: dir, Agent: "x"}
+	}, map[string]string{"hooks": "commit"})
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	hooks, _, _, err := rt.resolveProject(&opts)
+	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 2)
 	require.IsType(t, &hook.WorktreeHook{}, hooks[0], "global hook must run first")
@@ -256,10 +310,11 @@ func TestResolveProject_GlobalAndProjectHooksConcatenate(t *testing.T) {
 
 // An unknown hook type in the global config fails loudly, same as a project one.
 func TestResolveProject_UnknownGlobalHookTypeErrors(t *testing.T) {
-	rt := New(WithConfig(&config.Config{
+	rt, project := seedProject(t, &config.Config{
 		Hooks: []config.HookConfig{{Type: "does-not-exist"}},
-	}))
-	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "x"}
-	_, _, _, err := rt.resolveProject(&opts)
+	}, nil)
+	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
+
+	_, _, _, err := rt.resolveProject(context.Background(), &opts)
 	require.Error(t, err)
 }

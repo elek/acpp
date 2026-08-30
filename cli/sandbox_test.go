@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/db"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,7 +12,7 @@ func TestResolveSandboxSettings(t *testing.T) {
 		name         string
 		flagType     string
 		flagProfiles string
-		pc           config.ProjectConfig
+		project      db.ProjectRow
 		defaultSbx   string
 		wantType     string
 		wantProfiles string
@@ -29,23 +29,23 @@ func TestResolveSandboxSettings(t *testing.T) {
 			wantProfiles: "",
 		},
 		{
-			name:         "project config overrides global default",
-			pc:           config.ProjectConfig{Sandbox: config.ProjectSandbox{Name: "bbwrap", Profiles: "ssh,docker"}},
+			name:         "stored project config overrides global default",
+			project:      db.ProjectRow{Sandbox: "bbwrap", SandboxProfiles: "ssh,docker"},
 			defaultSbx:   "none",
 			wantType:     "bbwrap",
 			wantProfiles: "ssh,docker",
 		},
 		{
-			name:         "flag type overrides project config",
+			name:         "flag type overrides stored project config",
 			flagType:     "none",
-			pc:           config.ProjectConfig{Sandbox: config.ProjectSandbox{Name: "bbwrap"}},
+			project:      db.ProjectRow{Sandbox: "bbwrap"},
 			wantType:     "none",
 			wantProfiles: "",
 		},
 		{
 			name:         "flag profiles replace project profiles",
 			flagProfiles: "docker,ssh",
-			pc:           config.ProjectConfig{Sandbox: config.ProjectSandbox{Name: "bbwrap", Profiles: "systemd"}},
+			project:      db.ProjectRow{Sandbox: "bbwrap", SandboxProfiles: "systemd"},
 			wantType:     "bbwrap",
 			wantProfiles: "docker,ssh",
 		},
@@ -59,7 +59,7 @@ func TestResolveSandboxSettings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotProfiles := resolveSandboxSettings(tt.flagType, tt.flagProfiles, tt.pc, tt.defaultSbx)
+			gotType, gotProfiles := resolveSandboxSettings(tt.flagType, tt.flagProfiles, tt.project, tt.defaultSbx)
 			require.Equal(t, tt.wantType, gotType)
 			require.Equal(t, tt.wantProfiles, gotProfiles)
 		})

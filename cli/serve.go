@@ -64,8 +64,10 @@ func (s *Serve) Run(kctx *kong.Context) error {
 	}
 	defer store.Close()
 
-	// One router, shared by every surface.
-	rt := router.New(router.WithConfig(cfg))
+	// One router, shared by every surface. WithProjects makes stored per-project
+	// config (agent, sandbox, profiles, hooks) apply to conversations created from
+	// any of them.
+	rt := router.New(router.WithConfig(cfg), router.WithProjects(store))
 	defer rt.Close()
 	rt.OnShutdown(cancel)
 

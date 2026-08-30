@@ -33,7 +33,7 @@ type DiscordChannel struct {
 	ctx     context.Context
 
 	// agent is the default agent command for conversations this bot starts,
-	// used unless a project's .acpp.yaml overrides it (resolved by Router.Create).
+	// used unless the project's stored config overrides it (resolved by Router.Create).
 	agent string
 	// searchPaths are the base directories searched for a project directory
 	// matching a Discord channel's name.
@@ -71,7 +71,7 @@ var _ RenderSink = (*DiscordChannel)(nil)
 // subscribes it to the router so it renders every conversation's updates. agent
 // is the default agent command for conversations this bot starts; searchPaths
 // are the base directories searched for a project directory matching a channel's
-// name. Per-project defaults (.acpp.yaml) are resolved centrally by Router.Create.
+// name. Per-project defaults are resolved centrally by Router.Create.
 func NewDiscordChannel(token string, agent string, searchPaths []string, r *router.Router) (*DiscordChannel, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -302,7 +302,7 @@ func (c *DiscordChannel) resolveConversation(channelID string) (types.Conversati
 	}
 
 	// Agent, sandbox and hooks are resolved centrally from the project's
-	// .acpp.yaml by Router.Create; c.agent is the bot default it falls back to.
+	// the project row by Router.Create; c.agent is the bot default it falls back to.
 	opts := types.SessionOpts{
 		ProjectID: name,
 		Agent:     c.agent,

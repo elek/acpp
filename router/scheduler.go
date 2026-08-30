@@ -297,7 +297,7 @@ func (s *Scheduler) finish(meta types.ConversationMeta, job config.ScheduledJob)
 
 // opts builds the session options for a job from its resolved agent and sandbox.
 // It leaves Sandbox nil and hands the sandbox type/profiles to Router.Create as
-// strings, so the job's .acpp.yaml is folded in alongside the job's own settings
+// strings, so the project's stored config is folded in alongside the job's own settings
 // rather than bypassed by a pre-built sandbox.
 func (s *Scheduler) opts(job config.ScheduledJob, agent, sandboxType string) types.SessionOpts {
 	return types.SessionOpts{

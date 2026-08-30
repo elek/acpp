@@ -1,3 +1,0 @@
-sandbox:
-   name: bbwrap
-   profiles: android,docker,nvidia

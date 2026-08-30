@@ -11,6 +11,8 @@ import (
 
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/db"
+	"github.com/elek/acpp/hook"
+	"github.com/elek/acpp/sandbox"
 
 	"github.com/labstack/echo/v4"
 )
@@ -347,10 +349,51 @@ type sessionCard struct {
 	CostUSD float64
 }
 
-// configKV is a single key/value row in the project's configuration table.
+// configKV is a single editable row in the project's configuration table.
 type configKV struct {
+	// Key is the label shown to the user and Field the project column written by
+	// the save endpoint. They are the same for every field except env, which is a
+	// JSONB array rather than a text column.
 	Key   string
+	Field string
 	Value string
+	// Editor selects the popup's input widget: see projectConfigRows.
+	Editor string
+	// Placeholder is shown instead of an empty value, naming the fallback where
+	// there is one so an empty row does not read as "no sandbox" or "no agent".
+	Placeholder string
+}
+
+// Editor kinds. "text" is a single-line input; "profiles" and "hooks" are a
+// checkbox list of the enumerated names plus a free-text field for anything not
+// enumerated; "env" is a textarea of KEY=VALUE lines.
+const (
+	editorText     = "text"
+	editorProfiles = "profiles"
+	editorHooks    = "hooks"
+	editorEnv      = "env"
+)
+
+// projectConfigRows builds the configuration table for a project. Every field is
+// emitted even when unset: a row is the only place to edit its field, so hiding
+// empty ones would make an unset field unreachable.
+func projectConfigRows(p db.ProjectRow, defaults SessionDefaults) []configKV {
+	unsetOr := func(fallback string) string {
+		if fallback == "" {
+			return "(unset)"
+		}
+		return "(default: " + fallback + ")"
+	}
+	return []configKV{
+		{Key: "dir", Field: "dir", Value: p.Dir, Editor: editorText, Placeholder: "(unset)"},
+		{Key: "agent", Field: "agent", Value: p.Agent, Editor: editorText, Placeholder: unsetOr(defaults.Agent)},
+		{Key: "sandbox", Field: "sandbox", Value: p.Sandbox, Editor: editorText, Placeholder: unsetOr(defaults.Sandbox)},
+		{Key: "sandbox_profiles", Field: "sandbox_profiles", Value: p.SandboxProfiles, Editor: editorProfiles, Placeholder: "(unset)"},
+		{Key: "permission", Field: "permission", Value: p.Permission, Editor: editorText, Placeholder: "(unset)"},
+		{Key: "repo", Field: "repo", Value: p.Repo, Editor: editorText, Placeholder: "(unset)"},
+		{Key: "hooks", Field: "hooks", Value: p.Hooks, Editor: editorHooks, Placeholder: "(unset)"},
+		{Key: "env", Field: "env", Value: strings.Join(p.Env, "\n"), Editor: editorEnv, Placeholder: "(unset)"},
+	}
 }
 
 // firstPromptPreview returns a trimmed, length-capped preview of a session's
@@ -400,28 +443,23 @@ func (s *Server) viewProjectDetail(c echo.Context) error {
 		}
 	}
 
-	// Configuration table: only populated when a ProjectStore is configured.
-	// Blank fields are skipped so the table shows only what is actually set.
+	// Configuration table: only populated when a ProjectStore is configured,
+	// since without one there is nothing to read or write.
 	var cfg []configKV
+	var profileNames []string
 	if s.projects != nil {
 		p, err := s.projects.GetProject(ctx, name)
 		if err != nil {
 			return err
 		}
-		add := func(k, v string) {
-			if strings.TrimSpace(v) != "" {
-				cfg = append(cfg, configKV{Key: k, Value: v})
-			}
-		}
-		add("dir", p.Dir)
-		add("agent", p.Agent)
-		add("sandbox", p.Sandbox)
-		add("sandbox_profiles", p.SandboxProfiles)
-		add("permission", p.Permission)
-		add("repo", p.Repo)
-		add("hooks", p.Hooks)
-		if len(p.Env) > 0 {
-			add("env", strings.Join(p.Env, "\n"))
+		cfg = projectConfigRows(p, s.defaults)
+
+		// A failure to enumerate profiles must not take the page down: the popup
+		// degrades to its free-text field, which can still express any value.
+		profileNames, err = sandbox.ListProfiles()
+		if err != nil {
+			slog.Warn("could not list sandbox profiles for the config editor", "error", err)
+			profileNames = nil
 		}
 	}
 
@@ -429,9 +467,57 @@ func (s *Server) viewProjectDetail(c echo.Context) error {
 		"CurrentPage":    "projects",
 		"ProjectName":    name,
 		"Config":         cfg,
+		"Editable":       s.projects != nil,
+		"Profiles":       profileNames,
+		"HookTypes":      hook.RegisteredTypes(),
 		"ActiveSessions": active,
 		"ClosedSessions": closed,
 	})
+}
+
+// setProjectConfig writes one project config field, backing the edit popup on the
+// project detail page. Unknown profile/hook names are accepted rather than
+// rejected: the popup already warns about them, and rejecting would defeat its
+// free-text escape hatch for values this server cannot enumerate. A genuinely bad
+// value fails loudly at session creation, where sandbox and hook resolution
+// report the offending name.
+func (s *Server) setProjectConfig(c echo.Context) error {
+	if s.projects == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "project configuration not available"})
+	}
+	name := c.Param("name")
+	var body struct {
+		Field string `json:"field"`
+		Value string `json:"value"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	ctx := c.Request().Context()
+
+	// env is a JSONB array, not a text column, so it is written as a list of
+	// non-blank lines rather than through SetProjectField.
+	if body.Field == "env" {
+		var entries []string
+		for _, line := range strings.Split(body.Value, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				entries = append(entries, line)
+			}
+		}
+		if err := s.projects.SetProjectEnv(ctx, name, entries); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, map[string]string{"value": strings.Join(entries, "\n")})
+	}
+
+	// SetProjectField already whitelists the writable columns, so an unknown
+	// field surfaces as its error rather than a list duplicated here.
+	value := strings.TrimSpace(body.Value)
+	if err := s.projects.SetProjectField(ctx, name, body.Field, value); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"value": value})
 }
 
 func (s *Server) createProjectSession(c echo.Context) error {

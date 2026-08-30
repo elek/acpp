@@ -26,7 +26,7 @@ type SessionOpts struct {
 	SandboxType string
 	// SandboxProfiles is the comma-separated profile list requested by the caller
 	// (e.g. "android,docker"). It is only a request: Router.Create builds the
-	// actual Sandbox, folding the project's .acpp.yaml over these. Callers should
+	// actual Sandbox, folding the project's stored config over these. Callers should
 	// leave Sandbox nil and set SandboxType/SandboxProfiles so the project file is
 	// honored; a pre-built Sandbox bypasses that resolution.
 	SandboxProfiles string

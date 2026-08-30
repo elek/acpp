@@ -31,7 +31,7 @@ import (
 // true, session row stuck 'pending'), which is exactly what wedges a scheduled
 // job as "previous run still active".
 func TestSubprocessExitFinalizesConversation(t *testing.T) {
-	WithRouter(t, func(t *testing.T, dir string, r *router.Router) {
+	WithRouter(t, func(t *testing.T, dir string, r *router.Router, store db.Store) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
@@ -107,11 +107,8 @@ func TestSubprocessExitFinalizesConversation(t *testing.T) {
 			"conversation should be dropped once its subprocess exits")
 
 		// The persistence subscriber records the session as errored and stamped,
-		// not left stuck 'pending'. Verify against the same test database.
-		store, err := db.Connect(ctx, envOrSkip(t))
-		require.NoError(t, err)
-		defer store.Close()
-
+		// not left stuck 'pending'. Verified through the harness's own connection
+		// to the same test database.
 		require.Eventually(t, func() bool {
 			row, err := store.GetSession(ctx, id.ConversationID)
 			if err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ import (
 // acpp to inject a follow-up "commit" prompt that the agent (rai acp fake) turns
 // into a real git commit.
 func TestCommitHook(t *testing.T) {
-	WithRouter(t, func(t *testing.T, dir string, r *router.Router) {
+	WithRouter(t, func(t *testing.T, dir string, r *router.Router, store db.Store) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
@@ -34,9 +35,11 @@ func TestCommitHook(t *testing.T) {
 		git(t, proj, "commit", "-m", "initial commit")
 		require.Equal(t, 1, commitCount(proj), "expected exactly the initial commit")
 
-		// Configure the project to run rai acp fake with the commit hook.
-		writeFile(t, filepath.Join(proj, ".acpp.yaml"),
-			"agent: rai acp fake\nhooks:\n  - type: commit\n")
+		// Configure the project to run rai acp fake with the commit hook. This is
+		// the stored project config the router reads at Create time — the same rows
+		// the project detail page edits.
+		require.NoError(t, store.SetProjectField(ctx, proj, "agent", "rai acp fake"))
+		require.NoError(t, store.SetProjectField(ctx, proj, "hooks", "commit"))
 
 		// Dirty the working tree by modifying a tracked file. The commit hook only
 		// fires when the tree is dirty at end of turn (hook/commit.go), and rai acp
@@ -44,7 +47,8 @@ func TestCommitHook(t *testing.T) {
 		writeFile(t, filepath.Join(proj, "README.md"), "initial\nmore work\n")
 		require.True(t, isDirty(proj), "tree should be dirty before the prompt")
 
-		// Start a conversation in the project. Agent and hooks come from .acpp.yaml.
+		// Start a conversation in the project. Agent and hooks come from the
+		// project row keyed by ProjectID.
 		id, err := r.Create(ctx, types.SessionOpts{
 			ProjectID: proj,
 			CWD:       proj,

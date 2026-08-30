@@ -170,7 +170,7 @@ func (c *WebChannel) publishLifecycleClosed(sessionID, status string) {
 // synchronously within Create).
 func (c *WebChannel) StartSessionWeb(dir, agent, sandboxType, sandboxProfiles, projectName string) (string, error) {
 	// Leave Sandbox nil: Router.Create resolves it, folding the project's
-	// .acpp.yaml (which is where profiles like "docker" live) over these
+	// stored config (which is where profiles like "docker" live) over these
 	// caller-supplied defaults. Pre-building it here would bypass that.
 	opts := types.SessionOpts{
 		ProjectID:       projectName,

@@ -31,6 +31,31 @@
   .cfg-table tr:last-child td { border-bottom: none; }
   .cfg-table td.k { vertical-align: top; font-weight: 600; color: #78716c; width: 14em; font-size: 0.75em; }
   .cfg-table td.v { white-space: pre-wrap; }
+  .cfg-table td.v .unset { color: #a8a29e; font-style: italic; }
+  .cfg-edit { background: none; border: none; padding: 0 0 0 0.5em; cursor: pointer; font-size: 0.9em; line-height: 1; opacity: 0; transition: opacity 0.15s; vertical-align: baseline; }
+  .cfg-table tr:hover .cfg-edit, .cfg-edit:focus { opacity: 1; }
+  .cfg-edit:hover { opacity: 1; }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 1.5em; width: 100%; max-width: 480px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
+  .modal h2 { margin: 0 0 0.25em; font-size: 1.125em; font-weight: 700; color: #1c1917; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .modal .modal-note { color: #78716c; font-size: 0.75em; margin: 0 0 1.25em; }
+  .modal label.field-label { display: block; font-size: 0.75em; font-weight: 600; color: #78716c; text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.5em; }
+  .modal input[type=text], .modal textarea { width: 100%; padding: 0.5em 0.625em; border: 1px solid #e7e5e4; border-radius: 8px; font-size: 0.8125em; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .modal textarea { min-height: 7em; resize: vertical; }
+  .modal input[type=text]:focus, .modal textarea:focus { outline: none; border-color: #2563eb; }
+  .checklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.375em 1em; margin: 0 0 1em; }
+  .checklist label { display: flex; align-items: center; gap: 0.4em; font-size: 0.8125em; font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; cursor: pointer; }
+  .checklist.empty-list { color: #a8a29e; font-style: italic; font-size: 0.8125em; display: block; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 1.5em; }
+  .btn { padding: 0.5em 1em; border-radius: 8px; font-size: 0.8125em; font-weight: 600; border: 1px solid #e7e5e4; background: #fff; color: #1c1917; cursor: pointer; }
+  .btn:hover { background: #fafaf9; }
+  .btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-primary[disabled] { opacity: 0.6; cursor: default; }
+  .modal-error { color: #991b1b; font-size: 0.8125em; margin-top: 0.75em; display: none; }
+  .modal-warn { color: #854d0e; background: #fef9c3; border-radius: 8px; padding: 0.5em 0.625em; font-size: 0.75em; margin-top: 0.75em; display: none; }
 
   .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1em; margin-bottom: 2.25em; }
   .scard { background: #fff; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 6px 18px rgba(16,24,40,0.07); display: flex; flex-direction: column; overflow: hidden; }
@@ -80,9 +105,9 @@
     <table class="cfg-table">
       <tbody>
         {{range .Config}}
-        <tr>
+        <tr data-row="{{.Field}}">
           <td class="k">{{.Key}}</td>
-          <td class="v">{{.Value}}</td>
+          <td class="v"><span class="cfg-value{{if not .Value}} unset{{end}}" data-value="{{.Value}}" data-placeholder="{{.Placeholder}}">{{if .Value}}{{.Value}}{{else}}{{.Placeholder}}{{end}}</span>{{if $.Editable}}<button class="cfg-edit" data-field="{{.Field}}" data-editor="{{.Editor}}" title="Edit {{.Key}}" aria-label="Edit {{.Key}}">&#9998;</button>{{end}}</td>
         </tr>
         {{end}}
       </tbody>
@@ -134,5 +159,214 @@
   <p class="empty-note">No closed sessions.</p>
   {{end}}
 </main>
+
+{{if .Editable}}
+<div class="modal-overlay" id="cfgModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cfg-title">
+    <h2 id="cfg-title"></h2>
+    <p class="modal-note">Applies to new sessions. A running session keeps the configuration it started with.</p>
+
+    <div id="cfg-checklist-wrap" hidden>
+      <label class="field-label" id="cfg-checklist-label"></label>
+      <div class="checklist" id="cfg-checklist"></div>
+      <label class="field-label" for="cfg-other">Other (comma-separated)</label>
+      <input type="text" id="cfg-other" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div id="cfg-text-wrap" hidden>
+      <label class="field-label" for="cfg-text" id="cfg-text-label"></label>
+      <input type="text" id="cfg-text" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div id="cfg-textarea-wrap" hidden>
+      <label class="field-label" for="cfg-textarea">One KEY=VALUE per line</label>
+      <textarea id="cfg-textarea" spellcheck="false"></textarea>
+    </div>
+
+    <div class="modal-warn" id="cfg-warn"></div>
+    <div class="modal-error" id="cfg-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="cfg-cancel">Cancel</button>
+      <button class="btn btn-primary" id="cfg-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var PROJECT = {{.ProjectName}};
+  var PROFILES = {{.Profiles}} || [];
+  var HOOK_TYPES = {{.HookTypes}} || [];
+
+  var overlay = document.getElementById('cfgModal');
+  var title = document.getElementById('cfg-title');
+  var checkWrap = document.getElementById('cfg-checklist-wrap');
+  var checkLabel = document.getElementById('cfg-checklist-label');
+  var checklist = document.getElementById('cfg-checklist');
+  var other = document.getElementById('cfg-other');
+  var textWrap = document.getElementById('cfg-text-wrap');
+  var textLabel = document.getElementById('cfg-text-label');
+  var text = document.getElementById('cfg-text');
+  var areaWrap = document.getElementById('cfg-textarea-wrap');
+  var area = document.getElementById('cfg-textarea');
+  var warn = document.getElementById('cfg-warn');
+  var error = document.getElementById('cfg-error');
+  var saveBtn = document.getElementById('cfg-save');
+
+  var current = null; // {field, editor, known}
+
+  function splitList(value) {
+    return (value || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  // Split the stored value into names the server enumerated (rendered as ticked
+  // checkboxes) and everything else (kept verbatim in the free-text field), so a
+  // value this server cannot enumerate survives a round-trip through the popup.
+  function partition(value, known) {
+    var selected = [], extras = [];
+    splitList(value).forEach(function (name) {
+      (known.indexOf(name) >= 0 ? selected : extras).push(name);
+    });
+    return {selected: selected, extras: extras};
+  }
+
+  function renderChecklist(known, selected) {
+    checklist.innerHTML = '';
+    if (!known.length) {
+      checklist.classList.add('empty-list');
+      checklist.textContent = 'None available — use the field below.';
+      return;
+    }
+    checklist.classList.remove('empty-list');
+    known.forEach(function (name) {
+      var label = document.createElement('label');
+      var box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = name;
+      box.checked = selected.indexOf(name) >= 0;
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(name));
+      checklist.appendChild(label);
+    });
+  }
+
+  function collect() {
+    if (current.editor === 'env') return area.value;
+    if (current.editor === 'text') return text.value.trim();
+    var names = [];
+    checklist.querySelectorAll('input[type=checkbox]').forEach(function (box) {
+      if (box.checked) names.push(box.value);
+    });
+    splitList(other.value).forEach(function (name) {
+      if (names.indexOf(name) < 0) names.push(name);
+    });
+    return names.join(',');
+  }
+
+  // Unknown names are saved, not blocked: the picker cannot enumerate every
+  // possible value. Say so plainly instead, since the real failure would
+  // otherwise only appear when the next session starts.
+  function updateWarning() {
+    if (current.editor === 'env' || current.editor === 'text') return;
+    var unknown = splitList(other.value).filter(function (name) {
+      return current.known.indexOf(name) < 0;
+    });
+    if (unknown.length) {
+      warn.textContent = 'Not defined in this server’s configuration: ' + unknown.join(', ') +
+        '. Saving is allowed, but a session using ' + (unknown.length > 1 ? 'them' : 'it') + ' will fail to start.';
+      warn.style.display = 'block';
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+
+  function open(button) {
+    var field = button.dataset.field;
+    var editor = button.dataset.editor;
+    var valueEl = button.parentElement.querySelector('.cfg-value');
+    var value = valueEl.dataset.value || '';
+
+    current = {field: field, editor: editor, known: []};
+    title.textContent = field;
+    error.style.display = 'none';
+    warn.style.display = 'none';
+    saveBtn.disabled = false;
+
+    checkWrap.hidden = editor !== 'profiles' && editor !== 'hooks';
+    textWrap.hidden = editor !== 'text';
+    areaWrap.hidden = editor !== 'env';
+
+    var focusTarget;
+    if (editor === 'profiles' || editor === 'hooks') {
+      current.known = editor === 'profiles' ? PROFILES : HOOK_TYPES;
+      checkLabel.textContent = editor === 'profiles' ? 'Available profiles' : 'Available hooks';
+      var parts = partition(value, current.known);
+      renderChecklist(current.known, parts.selected);
+      other.value = parts.extras.join(',');
+      updateWarning();
+      focusTarget = checklist.querySelector('input') || other;
+    } else if (editor === 'env') {
+      area.value = value;
+      focusTarget = area;
+    } else {
+      textLabel.textContent = field;
+      text.value = value;
+      focusTarget = text;
+    }
+
+    overlay.classList.add('open');
+    if (focusTarget) focusTarget.focus();
+  }
+
+  function close() {
+    overlay.classList.remove('open');
+    current = null;
+  }
+
+  function save() {
+    if (!current) return;
+    var field = current.field;
+    var value = collect();
+    saveBtn.disabled = true;
+    error.style.display = 'none';
+
+    fetch('/project/' + encodeURIComponent(PROJECT) + '/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({field: field, value: value})
+    }).then(function (resp) {
+      return resp.json().then(function (body) { return {ok: resp.ok, body: body}; });
+    }).then(function (r) {
+      if (!r.ok) throw new Error((r.body && r.body.error) || 'save failed');
+      // Re-render from the server rather than patching the edited row: the
+      // fields are not independent (the server normalises what it stores, and
+      // rows describe defaults that other fields feed into), so a locally
+      // patched page can show a configuration that is no longer the stored one.
+      close();
+      window.location.reload();
+    }).catch(function (err) {
+      saveBtn.disabled = false;
+      error.textContent = err.message;
+      error.style.display = 'block';
+    });
+  }
+
+  document.querySelectorAll('.cfg-edit').forEach(function (button) {
+    button.addEventListener('click', function () { open(button); });
+  });
+  other.addEventListener('input', updateWarning);
+  saveBtn.addEventListener('click', save);
+  document.getElementById('cfg-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (!overlay.classList.contains('open')) return;
+    if (e.key === 'Escape') { close(); }
+    // Enter saves from the single-line inputs, not from the env textarea where
+    // it inserts a newline.
+    if (e.key === 'Enter' && e.target !== area) { e.preventDefault(); save(); }
+  });
+})();
+</script>
+{{end}}
 </body>
 </html>

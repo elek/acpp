@@ -13,15 +13,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/hook"
 	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 )
 
 // Router owns the process manager and the set of live conversations. It is safe
@@ -32,9 +36,19 @@ type Router struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// cfg supplies defaults used when resolving a conversation's .acpp.yaml at
+	// cfg supplies defaults used when resolving a conversation's project config at
 	// Create time (agent, sandbox). Never nil — New defaults it to an empty config.
 	cfg *config.Config
+
+	// projects supplies per-project config (agent, sandbox, profiles, hooks) at
+	// Create time. Nil for routers built without a database (acpp cat, acpp run),
+	// in which case resolution falls back to the caller's opts plus cfg.
+	projects db.ProjectStore
+
+	// staleWarnedDirs remembers the directories already warned about for holding a
+	// leftover .acpp.yaml, so the warning fires once per directory, not per session.
+	staleWarned     sync.Mutex
+	staleWarnedDirs map[string]bool
 
 	// shutdown, if set via OnShutdown, is invoked by the /exit command to bring
 	// the whole application down (typically the main context's cancel func).
@@ -53,13 +67,22 @@ type Router struct {
 type Option func(*Router)
 
 // WithConfig supplies the global config used to resolve per-conversation
-// .acpp.yaml defaults (agent, sandbox) at Create time. Without it the router
-// resolves against an empty config.
+// defaults (agent, sandbox) at Create time. Without it the router resolves
+// against an empty config.
 func WithConfig(cfg *config.Config) Option {
 	return func(r *Router) {
 		if cfg != nil {
 			r.cfg = cfg
 		}
+	}
+}
+
+// WithProjects supplies the store holding per-project config (agent, sandbox,
+// sandbox profiles, hooks), which Create folds over each conversation's opts.
+// Without it those settings come from the caller and the global config only.
+func WithProjects(projects db.ProjectStore) Option {
+	return func(r *Router) {
+		r.projects = projects
 	}
 }
 
@@ -107,7 +130,7 @@ type SessionState struct {
 	// /help; replaced on each update and cleared on Restart. Guarded by Router.mu.
 	availableCommands []acp.AvailableCommand
 	// hooks are this conversation's message-transform hooks, instantiated from the
-	// project's .acpp.yaml at Create. Each conversation has its own instances so
+	// project's stored config at Create. Each conversation has its own instances so
 	// hook state (e.g. commit's hasCommitted) is independent. Immutable after
 	// Create, so safe to read without the lock.
 	hooks []hook.Hook
@@ -153,7 +176,7 @@ func (r *Router) Subscribe(s Subscriber) {
 // need it can block via WaitReady). The subprocess is bound to the router's
 // lifetime (not ctx).
 func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.ConversationMeta, error) {
-	hooks, sbType, profiles, err := r.resolveProject(&opts)
+	hooks, sbType, profiles, err := r.resolveProject(ctx, &opts)
 	if err != nil {
 		return types.ConversationMeta{}, err
 	}
@@ -325,54 +348,92 @@ func (r *Router) CreateError(ctx context.Context, opts types.SessionOpts, errMsg
 	return meta
 }
 
-// resolveProject loads the conversation's .acpp.yaml (from opts.CWD) and folds it
-// over opts: the project file's agent and sandbox win over the caller's, which in
-// turn win over the global config defaults. It resolves opts.Agent and returns
-// the project's hooks plus the resolved sandbox type/profiles. The sandbox itself
-// is NOT built here — Router.Create builds it via resolveSandbox after the
-// session hooks have run, so a hook that rewrites opts.CWD (e.g. the worktree
-// hook) is reflected in the bind mounts. Centralizing this here means .acpp.yaml
-// is honored by every channel that creates a conversation. A missing file is not
-// an error.
-func (r *Router) resolveProject(opts *types.SessionOpts) (hooks []hook.Hook, sbType, profiles string, err error) {
-	pc, err := config.LoadProject(opts.CWD)
-	if err != nil {
-		return nil, "", "", err
+// resolveProject loads the conversation's project row (keyed by opts.ProjectID)
+// and folds it over opts: the project's stored agent and sandbox win over the
+// caller's, which in turn win over the global config defaults. It resolves
+// opts.Agent and returns the project's hooks plus the resolved sandbox
+// type/profiles. The sandbox itself is NOT built here — Router.Create builds it
+// via resolveSandbox after the session hooks have run, so a hook that rewrites
+// opts.CWD (e.g. the worktree hook) is reflected in the bind mounts.
+// Centralizing this here means stored project config is honored by every channel
+// that creates a conversation.
+//
+// A router with no project store (acpp cat, acpp run) resolves against the
+// caller's opts plus the global config only.
+func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (hooks []hook.Hook, sbType, profiles string, err error) {
+	var p db.ProjectRow
+	if r.projects != nil && opts.ProjectID != "" {
+		p, err = r.projects.GetProject(ctx, opts.ProjectID)
+		if err != nil {
+			return nil, "", "", errors.Wrap(err, "loading project config")
+		}
 	}
+	r.warnStaleProjectFile(opts.CWD)
 
-	// Agent: project file > caller > config default, then resolved against AgentPath.
+	// Agent: project row > caller > config default, then resolved against AgentPath.
 	agent := opts.Agent
-	if pc.Agent != "" {
-		agent = pc.Agent
+	if p.Agent != "" {
+		agent = p.Agent
 	}
 	if agent == "" {
 		agent = r.cfg.Defaults.Agent
 	}
 	opts.Agent = r.cfg.ResolveAgent(agent)
 
-	// Sandbox settings: project file > caller's type/profiles > config default.
+	// Sandbox settings: project row > caller's type/profiles > config default.
 	// Only meaningful when the caller has not pre-built a Sandbox (resolveSandbox
 	// honors that). Channels pass the sandbox as strings and leave Sandbox nil so
-	// this is the single place .acpp.yaml is folded in. Type and profiles resolve
-	// independently: a project may set `profiles` (e.g. docker) without declaring
-	// a `name`, in which case the type still falls back to the caller/default.
+	// this is the single place stored project config is folded in. Type and
+	// profiles resolve independently: a project may set profiles (e.g. docker)
+	// without declaring a type, in which case the type still falls back to the
+	// caller/default.
 	sbType, profiles = opts.SandboxType, opts.SandboxProfiles
-	if pc.Sandbox.Name != "" {
-		sbType = pc.Sandbox.Name
+	if p.Sandbox != "" {
+		sbType = p.Sandbox
 	} else if sbType == "" {
 		sbType = r.cfg.Defaults.Sandbox
 	}
-	if pc.Sandbox.Profiles != "" {
-		profiles = pc.Sandbox.Profiles
+	if p.SandboxProfiles != "" {
+		profiles = p.SandboxProfiles
 	}
 
 	// Hooks: global config hooks run first, then the project's own. Building both
 	// in one call means an unknown type in either source fails loudly here.
-	hooks, err = hook.Build(append(append([]config.HookConfig{}, r.cfg.Hooks...), pc.Hooks...))
+	projectHooks, err := config.ParseHookList(p.Hooks)
+	if err != nil {
+		return nil, "", "", errors.Wrapf(err, "project %q hooks", opts.ProjectID)
+	}
+	hooks, err = hook.Build(append(append([]config.HookConfig{}, r.cfg.Hooks...), projectHooks...))
 	if err != nil {
 		return nil, "", "", err
 	}
 	return hooks, sbType, profiles, nil
+}
+
+// staleProjectFile is the per-project config file acpp read before project config
+// moved into the database. A leftover copy is now ignored entirely, so warn once
+// per directory rather than letting the change alter behavior silently.
+const staleProjectFile = ".acpp.yaml"
+
+func (r *Router) warnStaleProjectFile(cwd string) {
+	if cwd == "" {
+		return
+	}
+	path := filepath.Join(cwd, staleProjectFile)
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	r.staleWarned.Lock()
+	defer r.staleWarned.Unlock()
+	if r.staleWarnedDirs == nil {
+		r.staleWarnedDirs = make(map[string]bool)
+	}
+	if r.staleWarnedDirs[cwd] {
+		return
+	}
+	r.staleWarnedDirs[cwd] = true
+	slog.Warn("ignoring leftover project config file: per-project settings now live in the database and are editable at /project/<name>",
+		"path", path)
 }
 
 // resolveSandbox builds opts.Sandbox from the resolved sandbox type/profiles,

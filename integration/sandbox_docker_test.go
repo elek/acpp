@@ -4,22 +4,26 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
 
-// TestSandboxDockerProfileE2E is the end-to-end proof that a project's
-// .acpp.yaml sandbox profiles are actually applied to a live session: it starts
-// a real conversation the way the web channel does (caller supplies only a
-// sandbox type; Sandbox is left nil so Router.Create folds in .acpp.yaml), then
-// starts a real docker container through the resolved session sandbox — the same
-// sandbox the `!` shell command runs in.
+// TestSandboxDockerProfileE2E is the end-to-end proof that a project's stored
+// sandbox profiles are actually applied to a live session: it starts a real
+// conversation the way the web channel does (caller supplies only a sandbox type;
+// Sandbox is left nil so Router.Create folds in the project row), then starts a
+// real docker container through the resolved session sandbox — the same sandbox
+// the `!` shell command runs in.
+//
+// The project config lives in a MemStore rather than postgres: resolveProject
+// goes through the same db.ProjectStore interface either way, and an in-memory
+// store keeps this test gated on docker/bwrap/rai alone.
 //
 // It is gated on docker, bwrap, rai and a reachable docker daemon; when any is
 // missing it skips, so `go test ./...` stays green on machines without them.
@@ -38,16 +42,19 @@ func TestSandboxDockerProfileE2E(t *testing.T) {
 	proj := t.TempDir()
 	// rai acp fake is the ACP agent used across the integration suite; the docker
 	// profile is what must reach the session for the container to start.
-	writeFile(t, filepath.Join(proj, ".acpp.yaml"),
-		"agent: rai acp fake\nsandbox:\n  name: bbwrap\n  profiles: docker\n")
+	const project = "proj"
+	store := db.NewMemStore()
+	require.NoError(t, store.SetProjectField(ctx, project, "agent", "rai acp fake"))
+	require.NoError(t, store.SetProjectField(ctx, project, "sandbox", "bbwrap"))
+	require.NoError(t, store.SetProjectField(ctx, project, "sandbox_profiles", "docker"))
 
-	r := router.New()
+	r := router.New(router.WithProjects(store))
 	t.Cleanup(r.Close)
 
 	// Mirrors web.StartSessionWeb after the fix: a default sandbox type, no
 	// pre-built Sandbox, so the project's profiles are folded in by the router.
 	id, err := r.Create(ctx, types.SessionOpts{
-		ProjectID:   "proj",
+		ProjectID:   project,
 		CWD:         proj,
 		Source:      "test",
 		SandboxType: "bbwrap",

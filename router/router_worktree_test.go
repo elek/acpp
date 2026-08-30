@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +34,16 @@ func initGitRepo(t *testing.T) string {
 	return dir
 }
 
+// worktreeRouter returns a router whose "worktree" project has the worktree hook
+// enabled in its stored config, plus that project's name.
+func worktreeRouter(t *testing.T) (*Router, string) {
+	t.Helper()
+	store := db.NewMemStore()
+	const project = "worktree-test"
+	require.NoError(t, store.SetProjectField(context.Background(), project, "hooks", "worktree"))
+	return New(WithProjects(store)), project
+}
+
 // TestWorktreeHookContentionEndToEnd drives the worktree hook through the real
 // Router.Create path with a lightweight agent that just drains stdin (so no ACP
 // handshake is needed and Close is prompt). It verifies the first session uses
@@ -40,10 +51,7 @@ func initGitRepo(t *testing.T) string {
 // worktree with the repo RW-bound, and the worktree is removed on close.
 func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	repo := initGitRepo(t)
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".acpp.yaml"),
-		[]byte("hooks:\n  - type: worktree\n"), 0o644))
-
-	rt := New()
+	rt, project := worktreeRouter(t)
 	t.Cleanup(rt.Close)
 	ctx := context.Background()
 	// Drains stdin and exits on EOF: stays alive while the session is open, closes
@@ -51,7 +59,7 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	const agent = `sh -c "cat >/dev/null"`
 
 	// First session: no contention, uses the repo directly.
-	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
 	require.NoError(t, err)
 	o1, ok := rt.Opts(m1.ConversationID)
 	require.True(t, ok)
@@ -61,7 +69,7 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(repo, ".worktree"))
 
 	// Second session on the same repo: contention -> isolated worktree.
-	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
 	require.NoError(t, err)
 	o2, ok := rt.Opts(m2.ConversationID)
 	require.True(t, ok)
@@ -88,10 +96,7 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 // (first) session produces no such notice.
 func TestWorktreeHookAnnouncesWorktree(t *testing.T) {
 	repo := initGitRepo(t)
-	require.NoError(t, os.WriteFile(filepath.Join(repo, ".acpp.yaml"),
-		[]byte("hooks:\n  - type: worktree\n"), 0o644))
-
-	rt := New()
+	rt, project := worktreeRouter(t)
 	t.Cleanup(rt.Close)
 	ctx := context.Background()
 	const agent = `sh -c "cat >/dev/null"`
@@ -113,12 +118,12 @@ func TestWorktreeHookAnnouncesWorktree(t *testing.T) {
 	})
 
 	// First session: no contention, no worktree, no notice.
-	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
 	require.NoError(t, err)
 	require.Empty(t, notices, "first session must not announce a worktree")
 
 	// Second session: contention -> worktree -> a notice naming the worktree dir.
-	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, Agent: agent})
+	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
 	require.NoError(t, err)
 	wt := filepath.Join(repo, ".worktree", m2.ConversationID)
 	require.Len(t, notices, 1, "contended session must announce its worktree once")

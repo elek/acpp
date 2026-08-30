@@ -32,7 +32,7 @@ const defaultWorktreeLocation = ".worktree"
 // land in the real repo; the worktree is removed when the session stops.
 //
 // It carries no per-conversation state and implements Outgoing/Incoming as
-// no-ops, so it lives in the same .acpp.yaml hooks list as message hooks.
+// no-ops, so it lives in the same project hooks list as message hooks.
 type WorktreeHook struct {
 	location string
 }

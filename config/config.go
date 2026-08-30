@@ -68,8 +68,9 @@ type Config struct {
 	OTLP            OTLPConfig      `yaml:"otlp"`
 	Desktop         DesktopConfig   `yaml:"desktop,omitempty"`
 	// Hooks are message-transform / session hooks applied to every conversation,
-	// in every project. They run BEFORE a project's own .acpp.yaml hooks (see
-	// Router.resolveProject). Same shape as ProjectConfig.Hooks.
+	// in every project. They run BEFORE a project's own hooks (see
+	// Router.resolveProject), which are parsed from its `hooks` column by
+	// ParseHookList into this same shape.
 	Hooks []HookConfig `yaml:"hooks,omitempty"`
 }
 

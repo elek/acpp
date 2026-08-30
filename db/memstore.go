@@ -590,6 +590,24 @@ func (m *MemStore) ClearProjectEnv(ctx context.Context, name string) error {
 	return nil
 }
 
+func (m *MemStore) SetProjectEnv(ctx context.Context, name string, entries []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.projects[name]
+	if !ok {
+		p = ProjectRow{Name: name, CreatedAt: time.Now()}
+	}
+	// Copy: the caller may reuse or mutate its slice after the call.
+	if entries == nil {
+		p.Env = nil
+	} else {
+		p.Env = append([]string(nil), entries...)
+	}
+	p.UpdatedAt = time.Now()
+	m.projects[name] = p
+	return nil
+}
+
 func (m *MemStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

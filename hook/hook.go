@@ -2,13 +2,15 @@
 // rewrite or drop messages flowing client->agent (Outgoing) and agent->subscriber
 // (Incoming), and can inject follow-up prompts via HookContext.Trigger.
 //
-// Hooks are configured per project in .acpp.yaml (see config.HookConfig) and
-// instantiated per conversation by the router, so each conversation gets its own
-// hook instances and may carry independent state.
+// Hooks are configured per project in the project's `hooks` column (see
+// config.ParseHookList) plus the global config, and instantiated per conversation
+// by the router, so each conversation gets its own hook instances and may carry
+// independent state.
 package hook
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/types"
@@ -76,7 +78,7 @@ type SessionHook interface {
 	SetupSession(sc SessionContext, opts *types.SessionOpts) (cleanup func(), err error)
 }
 
-// HookFactory builds a Hook from its .acpp.yaml params (per the spec: a
+// HookFactory builds a Hook from its configured params (per the spec: a
 // map[string]string maps to an interface implementation).
 type HookFactory func(params map[string]string) (Hook, error)
 
@@ -91,6 +93,17 @@ func Register(typ string, f HookFactory) {
 		panic(fmt.Sprintf("hook: type %q already registered", typ))
 	}
 	registry[typ] = f
+}
+
+// RegisteredTypes returns the registered hook type names, sorted. It lets the web
+// UI offer the hooks a project can actually enable instead of a free-text field.
+func RegisteredTypes() []string {
+	types := make([]string, 0, len(registry))
+	for typ := range registry {
+		types = append(types, typ)
+	}
+	sort.Strings(types)
+	return types
 }
 
 // Build instantiates the hooks described by cfgs, in order. An unknown type or a

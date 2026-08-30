@@ -47,6 +47,10 @@ type ProjectStore interface {
 	SetProjectField(ctx context.Context, name, field, value string) error
 	AppendProjectEnv(ctx context.Context, name, entry string) error
 	ClearProjectEnv(ctx context.Context, name string) error
+	// SetProjectEnv replaces the whole env array in one statement. Editing env
+	// from the UI needs this: ClearProjectEnv followed by a loop of
+	// AppendProjectEnv would leave the row empty if it failed partway.
+	SetProjectEnv(ctx context.Context, name string, entries []string) error
 	ListProjects(ctx context.Context) ([]ProjectListRow, error)
 }
 
@@ -783,6 +787,23 @@ func (s *PostgresStore) ClearProjectEnv(ctx context.Context, name string) error 
 	_, err := s.pool.Exec(ctx, `
 		UPDATE project SET env = '[]', updated_at = now() WHERE name = $1`, name)
 	return errors.Wrap(err, "clearing project env")
+}
+
+// SetProjectEnv replaces a project's whole env array in one statement, creating
+// the project if it does not exist. Unlike ClearProjectEnv + AppendProjectEnv it
+// cannot leave the row half-written when a save fails.
+func (s *PostgresStore) SetProjectEnv(ctx context.Context, name string, entries []string) error {
+	if entries == nil {
+		entries = []string{}
+	}
+	envJSON, err := json.Marshal(entries)
+	if err != nil {
+		return errors.Wrap(err, "marshaling project env")
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO project (name, env) VALUES ($1, $2::jsonb)
+		ON CONFLICT (name) DO UPDATE SET env = $2::jsonb, updated_at = now()`, name, envJSON)
+	return errors.Wrap(err, "setting project env")
 }
 
 // ListProjects returns all projects from the project table with running status.

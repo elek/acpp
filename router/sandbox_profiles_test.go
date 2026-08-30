@@ -1,25 +1,38 @@
 package router
 
 import (
-	"os"
-	"path/filepath"
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
 
-// wrapArgs resolves the sandbox for opts via the same code path Router.Create
-// uses (resolveProject folds in .acpp.yaml) and returns the bwrap argument line
-// the built sandbox would exec. It never spawns a subprocess, so it runs even
-// where docker/bwrap are unavailable — the docker profile only needs to appear
-// in the argument list, not actually bind.
-func wrapArgs(t *testing.T, opts *types.SessionOpts) string {
+// projectRouter builds a router backed by an in-memory store, seeded with the
+// given project fields (column name -> value). Returns the router and the
+// project name to put in SessionOpts.ProjectID.
+func projectRouter(t *testing.T, fields map[string]string) (*Router, string) {
 	t.Helper()
-	r := New()
+	store := db.NewMemStore()
+	const name = "widgets"
+	for field, value := range fields {
+		require.NoError(t, store.SetProjectField(context.Background(), name, field, value))
+	}
+	r := New(WithProjects(store))
 	t.Cleanup(r.Close)
-	_, sbType, profiles, err := r.resolveProject(opts)
+	return r, name
+}
+
+// wrapArgs resolves the sandbox for opts via the same code path Router.Create
+// uses (resolveProject folds in the stored project config) and returns the bwrap
+// argument line the built sandbox would exec. It never spawns a subprocess, so it
+// runs even where docker/bwrap are unavailable — the docker profile only needs to
+// appear in the argument list, not actually bind.
+func wrapArgs(t *testing.T, r *Router, opts *types.SessionOpts) string {
+	t.Helper()
+	_, sbType, profiles, err := r.resolveProject(context.Background(), opts)
 	require.NoError(t, err)
 	require.NoError(t, r.resolveSandbox(opts, sbType, profiles))
 	require.NotNil(t, opts.Sandbox, "resolveSandbox should have built a sandbox")
@@ -29,72 +42,93 @@ func wrapArgs(t *testing.T, opts *types.SessionOpts) string {
 
 // TestProjectProfilesApplied is the regression guard for the bug where a
 // caller-supplied sandbox (web defaults, scheduler jobs) caused the project's
-// .acpp.yaml profiles to be silently dropped, so a session never got e.g. the
+// configured profiles to be silently dropped, so a session never got e.g. the
 // docker socket even though `acpp sandbox bash` in the same directory did.
 //
-// The two subtests cover the two halves of the fix:
-//   - project .acpp.yaml declares the profiles (the reported scenario), and
-//   - the caller passes profiles as strings with no project sandbox block
-//     (the scheduler scenario, and the line resolveProject previously hardcoded
-//     to "").
-//
-// Both must end with the docker profile's socket bind present in the wrapped
-// command, and the resolved profiles recorded back on opts.
+// The subtests cover each source of profiles: the project row (the reported
+// scenario), caller-supplied strings (the scheduler scenario, and the line
+// resolveProject previously hardcoded to ""), and a router with no store at all
+// (acpp cat / acpp run).
 func TestProjectProfilesApplied(t *testing.T) {
-	t.Run("from project .acpp.yaml, caller only sets type", func(t *testing.T) {
-		dir := t.TempDir()
-		writeProjectFile(t, dir, "sandbox:\n  name: bbwrap\n  profiles: docker\n")
+	t.Run("from project row, caller only sets type", func(t *testing.T) {
+		r, project := projectRouter(t, map[string]string{
+			"sandbox":          "bbwrap",
+			"sandbox_profiles": "docker",
+		})
 
-		// Mirrors what the web channel now passes: a default sandbox type, no
-		// pre-built Sandbox, so the project file is folded in.
-		opts := types.SessionOpts{CWD: dir, SandboxType: "bbwrap"}
-		line := wrapArgs(t, &opts)
+		// Mirrors what the web channel passes: a default sandbox type, no
+		// pre-built Sandbox, so the project row is folded in.
+		opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, SandboxType: "bbwrap"}
+		line := wrapArgs(t, r, &opts)
 
 		require.Contains(t, line, "docker.sock",
-			"project .acpp.yaml docker profile must reach the session sandbox")
+			"the project's docker profile must reach the session sandbox")
 		require.Equal(t, "docker", opts.SandboxProfiles)
 	})
 
-	t.Run("from project .acpp.yaml with profiles but no name", func(t *testing.T) {
-		dir := t.TempDir()
-		// The reported scenario: a project file that sets only `profiles`,
-		// relying on the caller/default for the sandbox type.
-		writeProjectFile(t, dir, "sandbox:\n  profiles: docker\n")
+	t.Run("from project row with profiles but no sandbox type", func(t *testing.T) {
+		// A project that sets only profiles, relying on the caller/default for
+		// the sandbox type.
+		r, project := projectRouter(t, map[string]string{"sandbox_profiles": "docker"})
 
-		opts := types.SessionOpts{CWD: dir, SandboxType: "bbwrap"}
-		line := wrapArgs(t, &opts)
+		opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, SandboxType: "bbwrap"}
+		line := wrapArgs(t, r, &opts)
 
 		require.Contains(t, line, "docker.sock",
-			"a profiles-only .acpp.yaml must still reach the session sandbox")
+			"profiles without a stored sandbox type must still reach the session sandbox")
 		require.Equal(t, "docker", opts.SandboxProfiles)
 	})
 
-	t.Run("from caller profiles, no project sandbox block", func(t *testing.T) {
-		dir := t.TempDir() // no .acpp.yaml
+	t.Run("project row profiles override caller profiles", func(t *testing.T) {
+		r, project := projectRouter(t, map[string]string{"sandbox_profiles": "docker"})
+
+		opts := types.SessionOpts{
+			CWD: t.TempDir(), ProjectID: project,
+			SandboxType: "bbwrap", SandboxProfiles: "ssh",
+		}
+		line := wrapArgs(t, r, &opts)
+
+		require.Contains(t, line, "docker.sock", "the stored value wins over the caller's")
+		require.Equal(t, "docker", opts.SandboxProfiles)
+	})
+
+	t.Run("from caller profiles, nothing stored", func(t *testing.T) {
+		r, project := projectRouter(t, nil)
 
 		// Mirrors a scheduled job with sandbox_profiles set. Before the fix the
 		// caller's profiles were dropped here (resolveProject used a literal "").
-		opts := types.SessionOpts{CWD: dir, SandboxType: "bbwrap", SandboxProfiles: "docker"}
-		line := wrapArgs(t, &opts)
+		opts := types.SessionOpts{
+			CWD: t.TempDir(), ProjectID: project,
+			SandboxType: "bbwrap", SandboxProfiles: "docker",
+		}
+		line := wrapArgs(t, r, &opts)
 
 		require.Contains(t, line, "docker.sock",
 			"caller-supplied profiles must reach the session sandbox")
 		require.Equal(t, "docker", opts.SandboxProfiles)
 	})
 
-	t.Run("no profiles means no docker bind", func(t *testing.T) {
-		dir := t.TempDir()
-		writeProjectFile(t, dir, "sandbox:\n  name: bbwrap\n")
+	t.Run("from caller profiles with no project store", func(t *testing.T) {
+		// acpp cat / acpp run build a router without a database; the caller's
+		// profiles must still apply.
+		r := New()
+		t.Cleanup(r.Close)
 
-		opts := types.SessionOpts{CWD: dir, SandboxType: "bbwrap"}
-		line := wrapArgs(t, &opts)
+		opts := types.SessionOpts{CWD: t.TempDir(), SandboxType: "bbwrap", SandboxProfiles: "docker"}
+		line := wrapArgs(t, r, &opts)
+
+		require.Contains(t, line, "docker.sock",
+			"a router with no project store must still honor caller profiles")
+		require.Equal(t, "docker", opts.SandboxProfiles)
+	})
+
+	t.Run("no profiles means no docker bind", func(t *testing.T) {
+		r, project := projectRouter(t, map[string]string{"sandbox": "bbwrap"})
+
+		opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, SandboxType: "bbwrap"}
+		line := wrapArgs(t, r, &opts)
 
 		require.NotContains(t, line, "docker.sock",
 			"a session without the docker profile must not get the docker socket")
 	})
-}
-
-func writeProjectFile(t *testing.T, dir, body string) {
-	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".acpp.yaml"), []byte(body), 0o644))
 }
