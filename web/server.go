@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/elek/acpp/db"
@@ -354,16 +355,75 @@ func (s *Server) sessionEvents(c echo.Context) error {
 	return c.JSON(http.StatusOK, entries)
 }
 
+// sessionProject returns the project a session belongs to, or "" when that is
+// unknown — no such row, or a session recorded without a project.
+func (s *Server) sessionProject(ctx context.Context, id string) string {
+	row, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return row.ProjectName
+}
+
+// projectHasLiveSession reports whether the project still has a pending or
+// running session other than excludeID. The exclusion keeps the answer right
+// even if the session just closed has not been finalized in the store yet. An
+// unknown project counts as live: with nothing to enumerate there is no evidence
+// the project window is empty, so the caller leaves it alone.
+func (s *Server) projectHasLiveSession(ctx context.Context, project, excludeID string) (bool, error) {
+	if project == "" {
+		return true, nil
+	}
+	sessions, err := s.store.ListSessionsByProject(ctx, project)
+	if err != nil {
+		return false, err
+	}
+	for _, sess := range sessions {
+		if sess.ID == excludeID {
+			continue
+		}
+		if sess.Status == "running" || sess.Status == "pending" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Server) stopSession(c echo.Context) error {
 	if s.closer == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session management not available"})
 	}
+	ctx := c.Request().Context()
 	id := c.Param("id")
+	// Read the project before the close: the row is finalized synchronously by
+	// the persistence subscriber, and a session with no project at all must not
+	// be mistaken for one whose project went empty.
+	project := s.sessionProject(ctx, id)
 	s.closer.CloseSession(id)
+
+	// The project window's Stop button posts here with fetch and asks for JSON,
+	// because it needs to know whether any of the project's sessions is still
+	// open: when none is, the window has nothing left to show and the client
+	// closes it rather than sitting on a dead conversation.
+	if wantsJSON(c) {
+		live, err := s.projectHasLiveSession(ctx, project, id)
+		if err != nil {
+			return err
+		}
+		return c.JSON(http.StatusOK, map[string]bool{"project_live": live})
+	}
+
+	// Plain form posts (the session detail page) still get a redirect back.
 	if ref := c.Request().Referer(); ref != "" {
 		return c.Redirect(http.StatusSeeOther, ref)
 	}
 	return c.Redirect(http.StatusSeeOther, "/session/"+id)
+}
+
+// wantsJSON reports whether the caller asked for a JSON reply rather than the
+// redirect a browser form post expects.
+func wantsJSON(c echo.Context) bool {
+	return strings.Contains(c.Request().Header.Get(echo.HeaderAccept), echo.MIMEApplicationJSON)
 }
 
 func (s *Server) sendPrompt(c echo.Context) error {

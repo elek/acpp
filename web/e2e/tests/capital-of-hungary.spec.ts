@@ -25,12 +25,13 @@ test('prompt, stop, and start a new session', async ({ page, tempProject }) => {
   // 4. Stop the running session.
   await project.stop();
 
-  // 5. The prompt bar is gone entirely: a finished session cannot be prompted.
-  await project.expectStoppedState();
+  // 5. It was the project's only open session, so its window closes: the browser
+  //    lands back on the bare desktop with nothing to prompt.
+  await project.expectWindowClosed(tempProject.name);
 
-  // 6. Start a new session (via the session-bar "new" button) and ask the recall
-  //    question.
-  await project.startNewSession();
+  // 6. Re-open the project — which starts a fresh session to land on — and ask
+  //    the recall question.
+  await project.goto(tempProject.name);
   await project.send('what was the previous question');
 
   // 7. Loose assert: a session started and some answer came back.

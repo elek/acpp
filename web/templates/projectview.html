@@ -358,7 +358,9 @@
     </div>
     {{else}}
     <div class="conversation-area">
-      <div class="empty-state">
+      <!-- The bare desktop: no project window is open. Also where stopping the
+           last session of a project lands, once its window closes. -->
+      <div class="empty-state" id="no-project">
         <p>Select a project from the tab bar below to view sessions.</p>
       </div>
     </div>
@@ -1306,13 +1308,30 @@
     // Stopping ends the session. Drive the prompt-bar state from the click
     // directly (rather than a full-page reload that races the server-side status
     // finalization): hide the Stop button and the prompt bar.
+    //
+    // When the stop leaves the project with nothing open, the window itself is
+    // done: closing it (back to the bare desktop) is the honest end state. The
+    // alternative — staying on the dead conversation — is a trap, since any
+    // reopen of the project starts a fresh pending session and lands you in what
+    // looks like the same window again.
     if (stopFormEl) {
       stopFormEl.addEventListener('submit', function(e) {
         e.preventDefault();
         var stopBtn = document.getElementById('stop-btn');
         var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
         if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
-        fetch(stopFormEl.action, { method: 'POST' }).then(function() {
+        fetch(stopFormEl.action, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json' }
+        }).then(function(r) {
+          // A non-JSON body (older/stub server, or an error reply) just means we
+          // cannot tell whether the project went empty: keep the window.
+          return r.json().catch(function() { return {}; });
+        }).then(function(res) {
+          if (res && res.project_live === false) {
+            window.location.href = '/projects';
+            return;
+          }
           finalizeSession('stopped', 'status-complete');
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);

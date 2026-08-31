@@ -47,16 +47,19 @@ test('the Stop button is live on the pending session a fresh project opens on', 
     `/session/${sessionId}/stop`,
   );
 
-  // Clicking it really ends this session: the prompt bar goes away and the
-  // button with it.
+  // Clicking it really ends this session. It was the project's only open one, so
+  // the window closes with it (see stop-closes-window.stub.spec.ts).
   await project.stop();
-  await project.expectStoppedState();
-  await expect(project.stopButton).toBeHidden();
+  await project.expectWindowClosed(tempProject.name);
 });
 
 // The other in-place start: the session-bar "new" button. After a session has
 // been stopped the Stop button is hidden and still carries the old session's
 // action, so starting a fresh one must both re-show it and re-target it.
+//
+// Two sessions are opened first: stopping the project's last open session closes
+// the window outright, so the in-place swap this exercises only happens while
+// another session of the project is still live.
 test('the Stop button returns when the "new" button starts another session', async ({
   page,
   tempProject,
@@ -65,9 +68,14 @@ test('the Stop button returns when the "new" button starts another session', asy
   await project.gotoProjects();
   await project.createProject(tempProject.name, tempProject.dir);
 
+  // The stub agent never finishes this turn, so this session stays open and
+  // holds the window while the others come and go.
   await project.send('Do some slow work.');
   await expect(project.stopButton).toBeVisible();
   const firstSessionId = project.currentSessionId();
+
+  const secondSessionId = await project.startNewConversation(firstSessionId);
+  expect(secondSessionId).not.toBe(firstSessionId);
 
   await project.stop();
   await project.expectStoppedState();
@@ -75,11 +83,11 @@ test('the Stop button returns when the "new" button starts another session', asy
 
   // A fresh session from the "new" button brings the Stop button back, pointed
   // at the new session.
-  const secondSessionId = await project.startNewConversation(firstSessionId);
-  expect(secondSessionId).not.toBe(firstSessionId);
+  const thirdSessionId = await project.startNewConversation(secondSessionId);
+  expect(thirdSessionId).not.toBe(secondSessionId);
   await expect(project.stopButton).toBeVisible();
   await expect(project.stopForm).toHaveAttribute(
     'action',
-    `/session/${secondSessionId}/stop`,
+    `/session/${thirdSessionId}/stop`,
   );
 });

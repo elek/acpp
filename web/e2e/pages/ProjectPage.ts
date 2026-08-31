@@ -30,6 +30,7 @@ export class ProjectPage {
   readonly newProjectError: Locator;
   readonly projectTabs: Locator;
   readonly projectTitle: Locator;
+  readonly noProjectState: Locator;
   readonly infoButton: Locator;
   readonly infoPanel: Locator;
   readonly infoClose: Locator;
@@ -71,6 +72,8 @@ export class ProjectPage {
     this.newProjectError = page.locator('#np-error');
     this.projectTabs = page.locator('.taskbar .taskbar-tab-name');
     this.projectTitle = page.locator('.session-bar .project-title');
+    // The bare desktop with no project window open.
+    this.noProjectState = page.locator('#no-project');
     // Session Info side panel: the toggle in the session bar, the panel itself and
     // its live cost / context-window figures.
     this.infoButton = page.locator('#info-btn');
@@ -223,18 +226,25 @@ export class ProjectPage {
 
   // expectStoppedState asserts that a finished session offers no way to send a
   // new prompt: the entire prompt bar is hidden. Starting a fresh session is done
-  // from the session-bar "new" button instead.
+  // from the session-bar "new" button instead. Only meaningful while the window
+  // is still open — i.e. the project has another session live; when the stopped
+  // one was the last, use expectWindowClosed instead.
   async expectStoppedState(): Promise<void> {
     await expect(this.promptBar).toBeHidden();
   }
 
-  // startNewSession starts a fresh session via the session-bar "new" button (the
-  // finished session's prompt bar is hidden) and waits for the prompt bar to
-  // return in Send mode against the new session.
-  async startNewSession(): Promise<void> {
-    await this.newConversationButton.click();
-    await expect(this.promptBar).toBeVisible();
-    await expect(this.sendButton).toBeVisible();
+  // expectWindowClosed asserts the project's window is gone: the browser is back
+  // on the bare desktop (no project in the URL, so nothing is re-opened and no
+  // new session is started), the session and prompt bars went with it, and the
+  // project has no taskbar tab left.
+  async expectWindowClosed(project: string): Promise<void> {
+    await this.page.waitForURL(
+      (url) => url.pathname === '/projects' && !url.searchParams.get('project'),
+      { timeout: 30_000 },
+    );
+    await expect(this.noProjectState).toBeVisible();
+    await expect(this.promptBar).toHaveCount(0);
+    await expect(this.projectTabs.filter({ hasText: project })).toHaveCount(0);
   }
 
   // currentSessionId reads the `session` query param from the browser URL, which
