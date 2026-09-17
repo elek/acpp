@@ -1,3 +1,21 @@
+# Sandbox fragments. A fragment may "extend" others; the "sandbox" fragment is
+# the root every sandbox resolves, and the rest are selectable as profiles.
+# Override any of these in ~/.config/acpp/bbwrap.yaml — a fragment defined there
+# fully replaces the one here rather than merging with it.
+#
+# Keys: ro-bind / bind / dev-bind take "path" or "src:dest" (relative paths
+# resolve against $HOME); env sets a variable outright.
+#
+# "pass-env" names host environment variables the sandboxed agent may inherit,
+# on top of the always-applied baseline in env.go (PATH, HOME, LANG, LC_*,
+# ANTHROPIC_*, proxy and CA settings, ...). Everything else is dropped, so a
+# stray AWS_SECRET_ACCESS_KEY or GITHUB_TOKEN in the shell acpp was started from
+# never reaches the agent. A trailing "*" is a prefix wildcard; a leading "-"
+# withholds a variable the baseline would otherwise grant, and always wins.
+# A profile should carry the variables its binds make useful, so the two travel
+# together (see systemd, x11, docker, nvidia below). Per project, the same
+# syntax goes in the comma-separated "sandbox_env" field at /project/<name>.
+
 base:
   ro-bind:
     - /bin
@@ -49,11 +67,28 @@ systemd:
     - /sys
   bind:
     - /run/user/1000
+  pass-env:
+    - XDG_RUNTIME_DIR
+    - DBUS_SESSION_BUS_ADDRESS
+
+# X11/Wayland passthrough. Opt in with --profiles x11. DISPLAY is deliberately
+# not inherited by default: with no socket bound it only produces confusing
+# "cannot connect to display" errors, so the vars travel with the binds that
+# make them work.
+x11:
+  ro-bind:
+    - /tmp/.X11-unix
+  pass-env:
+    - DISPLAY
+    - WAYLAND_DISPLAY
+    - XAUTHORITY
 
 docker:
   bind:
     - /var/lib/docker
     - /var/run/docker.sock
+  pass-env:
+    - DOCKER_HOST
 
 # NVIDIA GPU passthrough. Opt in with --profiles nvidia. Requires the host
 # NVIDIA driver plus the listed device nodes to exist; bwrap errors if any
@@ -73,3 +108,7 @@ nvidia:
     - /dev/nvidia-uvm
     - /dev/nvidia-uvm-tools
     - /dev/nvidia0
+  pass-env:
+    - NVIDIA_VISIBLE_DEVICES
+    - CUDA_VISIBLE_DEVICES
+    - CUDA_HOME

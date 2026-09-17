@@ -41,7 +41,8 @@ func (s *Sandbox) Run(kctx *kong.Context) error {
 	project := projectSandboxConfig(context.Background(), cfg, cwd)
 	sbType, profiles := resolveSandboxSettings(s.SandboxType, s.Profiles, project, cfg.Defaults.Sandbox)
 
-	sb, err := sandbox.ResolveSandbox(sbType, profiles, cwd, nil, nil)
+	sb, err := sandbox.ResolveSandbox(sbType, profiles, cwd, nil, nil,
+		sandbox.ParseEnvList(project.SandboxEnv))
 	if err != nil {
 		return fmt.Errorf("resolving sandbox %q: %w", sbType, err)
 	}
@@ -58,7 +59,9 @@ func (s *Sandbox) Run(kctx *kong.Context) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	// Same environment whitelist the project's agent sessions get, so this shell
+	// is a faithful reproduction of what they run in rather than a roomier one.
+	cmd.Env = sb.FilterEnv(os.Environ())
 
 	if err := cmd.Run(); err != nil {
 		// Propagate the child's exit code so scripts can rely on it.

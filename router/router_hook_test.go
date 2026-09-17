@@ -186,7 +186,7 @@ func TestResolveProject_CallerAgentUsedWithoutStoredAgent(t *testing.T) {
 	rt, project := seedProject(t, &config.Config{Defaults: config.Defaults{Agent: "default-agent"}}, nil)
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "caller-agent"}
 
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Empty(t, hooks)
 	require.Equal(t, "caller-agent", opts.Agent)
@@ -196,7 +196,7 @@ func TestResolveProject_StoredAgentOverridesCaller(t *testing.T) {
 	rt, project := seedProject(t, nil, map[string]string{"agent": "project-agent"})
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "caller-agent"}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Equal(t, "project-agent", opts.Agent)
 }
@@ -205,7 +205,7 @@ func TestResolveProject_FallsBackToConfigDefaultAgent(t *testing.T) {
 	rt, project := seedProject(t, &config.Config{Defaults: config.Defaults{Agent: "default-agent"}}, nil)
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Equal(t, "default-agent", opts.Agent)
 }
@@ -217,7 +217,7 @@ func TestResolveProject_NoProjectStore(t *testing.T) {
 	t.Cleanup(rt.Close)
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: "widgets"}
 
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Empty(t, hooks)
 	require.Equal(t, "default-agent", opts.Agent)
@@ -231,7 +231,7 @@ func TestResolveProject_EmptyProjectIDSkipsLookup(t *testing.T) {
 	t.Cleanup(rt.Close)
 	opts := types.SessionOpts{CWD: t.TempDir(), Agent: "caller-agent"}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Equal(t, "caller-agent", opts.Agent)
 
@@ -244,7 +244,7 @@ func TestResolveProject_BuildsHooksFromProjectRow(t *testing.T) {
 	rt, project := seedProject(t, nil, map[string]string{"hooks": "commit"})
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
 	require.IsType(t, &hook.CommitHook{}, hooks[0])
@@ -257,7 +257,7 @@ func TestResolveProject_BuildsParameterisedHookFromProjectRow(t *testing.T) {
 	// That the location param actually reaches the hook is covered by
 	// hook.TestWorktreeHookRegistered, where the field is visible; here it is
 	// enough that the compact "type:key=value" syntax parses and builds.
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
 	require.IsType(t, &hook.WorktreeHook{}, hooks[0])
@@ -267,7 +267,7 @@ func TestResolveProject_UnknownHookTypeErrors(t *testing.T) {
 	rt, project := seedProject(t, nil, map[string]string{"hooks": "does-not-exist"})
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.Error(t, err)
 }
 
@@ -275,7 +275,7 @@ func TestResolveProject_MalformedHookListErrors(t *testing.T) {
 	rt, project := seedProject(t, nil, map[string]string{"hooks": "worktree:location"})
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "hooks")
 }
@@ -288,7 +288,7 @@ func TestResolveProject_BuildsHooksFromGlobalConfig(t *testing.T) {
 	}, nil)
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 1)
 	require.IsType(t, &hook.WorktreeHook{}, hooks[0])
@@ -301,7 +301,7 @@ func TestResolveProject_GlobalAndProjectHooksConcatenate(t *testing.T) {
 	}, map[string]string{"hooks": "commit"})
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	hooks, _, _, err := rt.resolveProject(context.Background(), &opts)
+	hooks, _, err := rt.resolveProject(context.Background(), &opts)
 	require.NoError(t, err)
 	require.Len(t, hooks, 2)
 	require.IsType(t, &hook.WorktreeHook{}, hooks[0], "global hook must run first")
@@ -315,6 +315,6 @@ func TestResolveProject_UnknownGlobalHookTypeErrors(t *testing.T) {
 	}, nil)
 	opts := types.SessionOpts{CWD: t.TempDir(), ProjectID: project, Agent: "x"}
 
-	_, _, _, err := rt.resolveProject(context.Background(), &opts)
+	_, _, err := rt.resolveProject(context.Background(), &opts)
 	require.Error(t, err)
 }

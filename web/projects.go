@@ -389,6 +389,7 @@ func projectConfigRows(p db.ProjectRow, defaults SessionDefaults) []configKV {
 		{Key: "agent", Field: "agent", Value: p.Agent, Editor: editorText, Placeholder: unsetOr(defaults.Agent)},
 		{Key: "sandbox", Field: "sandbox", Value: p.Sandbox, Editor: editorText, Placeholder: unsetOr(defaults.Sandbox)},
 		{Key: "sandbox_profiles", Field: "sandbox_profiles", Value: p.SandboxProfiles, Editor: editorProfiles, Placeholder: "(unset)"},
+		{Key: "sandbox_env", Field: "sandbox_env", Value: p.SandboxEnv, Editor: editorText, Placeholder: "(default whitelist)"},
 		{Key: "permission", Field: "permission", Value: p.Permission, Editor: editorText, Placeholder: "(unset)"},
 		{Key: "repo", Field: "repo", Value: p.Repo, Editor: editorText, Placeholder: "(unset)"},
 		{Key: "hooks", Field: "hooks", Value: p.Hooks, Editor: editorHooks, Placeholder: "(unset)"},

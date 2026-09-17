@@ -21,7 +21,11 @@ type ProjectRow struct {
 	Dir             string
 	Sandbox         string
 	SandboxProfiles string
-	Permission      string
+	// SandboxEnv is a comma-separated per-project override of the sandbox
+	// environment whitelist: names of extra host variables to let through, or
+	// "-NAME" to withhold one the default list grants.
+	SandboxEnv string
+	Permission string
 	Env             []string
 	Repo            string
 	Hooks           string
@@ -730,6 +734,7 @@ var validProjectFields = map[string]bool{
 	"dir":              true,
 	"sandbox":          true,
 	"sandbox_profiles": true,
+	"sandbox_env":      true,
 	"permission":       true,
 	"repo":             true,
 	"hooks":            true,
@@ -748,9 +753,9 @@ func (s *PostgresStore) GetProject(ctx context.Context, name string) (ProjectRow
 	var r ProjectRow
 	var envJSON json.RawMessage
 	err = s.pool.QueryRow(ctx, `
-		SELECT name, agent, dir, sandbox, sandbox_profiles, permission, env, repo, hooks, created_at, updated_at
+		SELECT name, agent, dir, sandbox, sandbox_profiles, sandbox_env, permission, env, repo, hooks, created_at, updated_at
 		FROM project WHERE name = $1`, name).Scan(
-		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.SandboxProfiles, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.CreatedAt, &r.UpdatedAt,
+		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.SandboxProfiles, &r.SandboxEnv, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return ProjectRow{}, errors.Wrap(err, "querying project")

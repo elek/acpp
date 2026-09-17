@@ -14,8 +14,15 @@ var embeddedBwrapConfig []byte
 // Sandbox wraps command execution, optionally inside a bubblewrap sandbox.
 type Sandbox interface {
 	// Wrap returns the command and args to execute, wrapping the given
-	// command+args with sandbox if configured. env is passed through.
+	// command+args with sandbox if configured.
 	Wrap(command string, args []string) (string, []string)
+
+	// FilterEnv returns the subset of hostEnv (KEY=VALUE entries) the sandboxed
+	// process may inherit. bwrap passes its own environment to the child, so
+	// restricting the environment of the bwrap process itself is what enforces
+	// the whitelist — deliberately not --clearenv plus --setenv, which would put
+	// secrets in the bwrap argv for any process to read from /proc.
+	FilterEnv(hostEnv []string) []string
 }
 
 // BwrapConfig represents a single fragment in the bwrap config YAML.
@@ -25,6 +32,10 @@ type BwrapConfig struct {
 	Bind    []string          `yaml:"bind"`
 	DevBind []string          `yaml:"dev-bind"`
 	Env     map[string]string `yaml:"env"`
+	// PassEnv names host environment variables this fragment adds to the
+	// inherited set, on top of defaultPassEnv. A trailing "*" is a prefix
+	// wildcard; a leading "-" denies instead of allows.
+	PassEnv []string `yaml:"pass-env"`
 }
 
 // noneSandbox passes commands through without wrapping.
@@ -32,6 +43,12 @@ type noneSandbox struct{}
 
 func (n *noneSandbox) Wrap(command string, args []string) (string, []string) {
 	return command, args
+}
+
+// FilterEnv passes the host environment through untouched: "none" means no
+// isolation at all, so there is nothing to filter for.
+func (n *noneSandbox) FilterEnv(hostEnv []string) []string {
+	return hostEnv
 }
 
 // NewNoneSandbox returns a Sandbox that does not wrap commands.
@@ -48,8 +65,10 @@ func NewNoneSandbox() Sandbox {
 // fragments. They are ignored when sandboxType is "none".
 // rwBinds are the read-write equivalent of roBinds (emitted as --bind), layered
 // on top of roBinds; also ignored when sandboxType is "none".
+// passEnv are caller-supplied environment whitelist entries (the per-project
+// override) layered on top of the resolved fragments' pass-env; see envMatcher.
 // configPaths are optional additional config files; if empty, DefaultBwrapConfigPaths is used.
-func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rwBinds []string, configPaths ...string) (Sandbox, error) {
+func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rwBinds, passEnv []string, configPaths ...string) (Sandbox, error) {
 	if sandboxType == "none" {
 		return NewNoneSandbox(), nil
 	}
@@ -90,14 +109,22 @@ func ResolveSandbox(sandboxType string, profiles string, cwd string, roBinds, rw
 		profileList = append(profileList, rwBindFragment)
 	}
 
+	// The per-project environment whitelist override, layered last. Order only
+	// matters for readability: deny entries beat allow entries regardless.
+	if len(passEnv) > 0 {
+		fragments[passEnvFragment] = &BwrapConfig{PassEnv: passEnv}
+		profileList = append(profileList, passEnvFragment)
+	}
+
 	return NewBwrapSandbox(rootFragment, profileList, cwd, fragments)
 }
 
-// roBindFragment and rwBindFragment are the synthetic fragment names used to
-// layer caller-supplied binds on top of the resolved profiles.
+// roBindFragment, rwBindFragment and passEnvFragment are the synthetic fragment
+// names used to layer caller-supplied settings on top of the resolved profiles.
 const (
-	roBindFragment = "__robinds__"
-	rwBindFragment = "__rwbinds__"
+	roBindFragment  = "__robinds__"
+	rwBindFragment  = "__rwbinds__"
+	passEnvFragment = "__passenv__"
 )
 
 // configOverlays returns the overlay paths to layer over the embedded config:

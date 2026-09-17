@@ -41,6 +41,20 @@ func TestSetProjectConfigSandboxProfiles(t *testing.T) {
 	}
 }
 
+func TestSetProjectConfigSandboxEnv(t *testing.T) {
+	store := db.NewMemStore()
+	s := New(store, ":0").WithProjects(store)
+
+	const value = "GITHUB_TOKEN,-ANTHROPIC_API_KEY"
+	rec := doPostJSON(t, s, "/project/widgets/config", `{"field":"sandbox_env","value":"`+value+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := projectRow(t, store, "widgets").SandboxEnv; got != value {
+		t.Errorf("sandbox_env = %q, want %q", got, value)
+	}
+}
+
 func TestSetProjectConfigTrimsValue(t *testing.T) {
 	store := db.NewMemStore()
 	s := New(store, ":0").WithProjects(store)
@@ -176,7 +190,7 @@ func TestProjectDetailRendersAllConfigRows(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	for _, field := range []string{"dir", "agent", "sandbox", "sandbox_profiles", "permission", "repo", "hooks", "env"} {
+	for _, field := range []string{"dir", "agent", "sandbox", "sandbox_profiles", "sandbox_env", "permission", "repo", "hooks", "env"} {
 		if !strings.Contains(body, `data-row="`+field+`"`) {
 			t.Errorf("row for unset field %q missing:\n%s", field, body)
 		}

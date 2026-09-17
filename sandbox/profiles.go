@@ -7,11 +7,12 @@ import "sort"
 const rootFragment = "sandbox"
 
 // syntheticBindFragments are the fragment names ResolveSandbox injects for
-// caller-supplied binds. They exist only for the duration of one resolve and are
-// never user-selectable.
+// caller-supplied binds and env whitelist entries. They exist only for the
+// duration of one resolve and are never user-selectable.
 var syntheticBindFragments = map[string]bool{
-	roBindFragment: true,
-	rwBindFragment: true,
+	roBindFragment:  true,
+	rwBindFragment:  true,
+	passEnvFragment: true,
 }
 
 // ListProfiles returns the sandbox profile names a project may select, sorted.

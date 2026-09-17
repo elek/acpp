@@ -192,7 +192,7 @@ func (r *Router) Subscribe(s Subscriber) {
 // need it can block via WaitReady). The subprocess is bound to the router's
 // lifetime (not ctx).
 func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.ConversationMeta, error) {
-	hooks, sbType, profiles, err := r.resolveProject(ctx, &opts)
+	hooks, sbSettings, err := r.resolveProject(ctx, &opts)
 	if err != nil {
 		return types.ConversationMeta{}, err
 	}
@@ -243,7 +243,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	}
 
 	// Build the sandbox now that opts.CWD / opts.RWBinds reflect any redirection.
-	if err := r.resolveSandbox(&opts, sbType, profiles); err != nil {
+	if err := r.resolveSandbox(&opts, sbSettings); err != nil {
 		runCleanups(cleanups, false)
 		return types.ConversationMeta{}, err
 	}
@@ -386,12 +386,12 @@ func (r *Router) CreateError(ctx context.Context, opts types.SessionOpts, errMsg
 //
 // A router with no project store (acpp cat, acpp run) resolves against the
 // caller's opts plus the global config only.
-func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (hooks []hook.Hook, sbType, profiles string, err error) {
+func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (hooks []hook.Hook, sb sandboxSettings, err error) {
 	var p db.ProjectRow
 	if r.projects != nil && opts.ProjectID != "" {
 		p, err = r.projects.GetProject(ctx, opts.ProjectID)
 		if err != nil {
-			return nil, "", "", errors.Wrap(err, "loading project config")
+			return nil, sandboxSettings{}, errors.Wrap(err, "loading project config")
 		}
 	}
 	r.warnStaleProjectFile(opts.CWD)
@@ -413,27 +413,37 @@ func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (h
 	// profiles resolve independently: a project may set profiles (e.g. docker)
 	// without declaring a type, in which case the type still falls back to the
 	// caller/default.
-	sbType, profiles = opts.SandboxType, opts.SandboxProfiles
+	sb = sandboxSettings{sbType: opts.SandboxType, profiles: opts.SandboxProfiles}
 	if p.Sandbox != "" {
-		sbType = p.Sandbox
-	} else if sbType == "" {
-		sbType = r.cfg.Defaults.Sandbox
+		sb.sbType = p.Sandbox
+	} else if sb.sbType == "" {
+		sb.sbType = r.cfg.Defaults.Sandbox
 	}
 	if p.SandboxProfiles != "" {
-		profiles = p.SandboxProfiles
+		sb.profiles = p.SandboxProfiles
 	}
+	sb.passEnv = sandbox.ParseEnvList(p.SandboxEnv)
 
 	// Hooks: global config hooks run first, then the project's own. Building both
 	// in one call means an unknown type in either source fails loudly here.
 	projectHooks, err := config.ParseHookList(p.Hooks)
 	if err != nil {
-		return nil, "", "", errors.Wrapf(err, "project %q hooks", opts.ProjectID)
+		return nil, sandboxSettings{}, errors.Wrapf(err, "project %q hooks", opts.ProjectID)
 	}
 	hooks, err = hook.Build(append(append([]config.HookConfig{}, r.cfg.Hooks...), projectHooks...))
 	if err != nil {
-		return nil, "", "", err
+		return nil, sandboxSettings{}, err
 	}
-	return hooks, sbType, profiles, nil
+	return hooks, sb, nil
+}
+
+// sandboxSettings is the sandbox configuration resolved from the project row,
+// the caller's opts and the global defaults, carried from resolveProject to
+// resolveSandbox across the session hooks that run in between.
+type sandboxSettings struct {
+	sbType   string
+	profiles string
+	passEnv  []string
 }
 
 // staleProjectFile is the per-project config file acpp read before project config
@@ -466,17 +476,18 @@ func (r *Router) warnStaleProjectFile(cwd string) {
 // unless the caller already supplied a Sandbox. It is called from Create AFTER
 // the session hooks have run, so opts.CWD / opts.ROBinds / opts.RWBinds reflect
 // any redirection. A pre-built Sandbox opts out (its profiles are the caller's).
-func (r *Router) resolveSandbox(opts *types.SessionOpts, sbType, profiles string) error {
-	if opts.Sandbox != nil || sbType == "" {
+func (r *Router) resolveSandbox(opts *types.SessionOpts, settings sandboxSettings) error {
+	if opts.Sandbox != nil || settings.sbType == "" {
 		return nil
 	}
-	sb, err := sandbox.ResolveSandbox(sbType, profiles, opts.CWD, opts.ROBinds, opts.RWBinds)
+	sb, err := sandbox.ResolveSandbox(settings.sbType, settings.profiles, opts.CWD,
+		opts.ROBinds, opts.RWBinds, settings.passEnv)
 	if err != nil {
-		return fmt.Errorf("router: resolving sandbox %q: %w", sbType, err)
+		return fmt.Errorf("router: resolving sandbox %q: %w", settings.sbType, err)
 	}
 	opts.Sandbox = sb
-	opts.SandboxType = sbType
-	opts.SandboxProfiles = profiles
+	opts.SandboxType = settings.sbType
+	opts.SandboxProfiles = settings.profiles
 	return nil
 }
 

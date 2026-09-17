@@ -13,6 +13,7 @@ import (
 type bwrapSandbox struct {
 	bwrapArgs []string
 	cwd       string
+	env       envMatcher
 }
 
 // NewBwrapSandbox creates a Sandbox that wraps commands with bubblewrap.
@@ -52,7 +53,7 @@ func NewBwrapSandbox(name string, profiles []string, cwd string, allFragments ma
 		return nil, err
 	}
 
-	return &bwrapSandbox{bwrapArgs: args, cwd: cwd}, nil
+	return &bwrapSandbox{bwrapArgs: args, cwd: cwd, env: newEnvMatcher(resolved.passEnv)}, nil
 }
 
 func (b *bwrapSandbox) Wrap(command string, args []string) (string, []string) {
@@ -63,12 +64,18 @@ func (b *bwrapSandbox) Wrap(command string, args []string) (string, []string) {
 	return "/usr/bin/bwrap", allArgs
 }
 
+// FilterEnv drops every host variable outside the resolved whitelist.
+func (b *bwrapSandbox) FilterEnv(hostEnv []string) []string {
+	return b.env.filterEnv(hostEnv)
+}
+
 // resolvedConfig holds the flattened result of resolving a fragment tree.
 type resolvedConfig struct {
 	roBind  []string
 	bind    []string
 	devBind []string
 	env     map[string]string
+	passEnv []string
 }
 
 func mergeResolved(base, overlay resolvedConfig) resolvedConfig {
@@ -76,6 +83,7 @@ func mergeResolved(base, overlay resolvedConfig) resolvedConfig {
 		roBind:  append(append([]string{}, base.roBind...), overlay.roBind...),
 		bind:    append(append([]string{}, base.bind...), overlay.bind...),
 		devBind: append(append([]string{}, base.devBind...), overlay.devBind...),
+		passEnv: append(append([]string{}, base.passEnv...), overlay.passEnv...),
 		env:     make(map[string]string),
 	}
 	for k, v := range base.env {
@@ -119,6 +127,7 @@ func resolveFragment(name string, fragments map[string]*BwrapConfig, visited map
 	result.roBind = append(result.roBind, frag.ROBind...)
 	result.bind = append(result.bind, frag.Bind...)
 	result.devBind = append(result.devBind, frag.DevBind...)
+	result.passEnv = append(result.passEnv, frag.PassEnv...)
 	for k, v := range frag.Env {
 		result.env[k] = v
 	}
@@ -161,6 +170,10 @@ func buildBwrapArgs(name string, resolved resolvedConfig, cwd string) ([]string,
 	args = append(args, "--dev", "/dev")
 	args = append(args, "--proc", "/proc")
 	args = append(args, "--hostname", name, "--unshare-uts")
+
+	// /tmp above is a fresh tmpfs, so a host TMPDIR pointing outside the sandbox
+	// would break. TMPDIR is not in the inherited set; pin it to the tmpfs.
+	args = append(args, "--setenv", "TMPDIR", "/tmp")
 
 	// Hostname and hosts files
 	hostnameFile, err := writeTempFile(name)

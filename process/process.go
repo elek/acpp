@@ -27,8 +27,24 @@ import (
 type Spec struct {
 	Agent   string          // full command string, e.g. "claude-code-acp --flag"
 	Cwd     string          // working directory
-	Env     []string        // KEY=VALUE entries appended to os.Environ()
+	Env     []string        // KEY=VALUE entries appended to the (sandbox-filtered) host env
 	Sandbox sandbox.Sandbox // optional sandbox wrapper; nil means run directly
+}
+
+// buildEnv assembles the environment for the agent subprocess: the host
+// environment narrowed to what the sandbox allows through, then spec.Env
+// appended.
+//
+// The order matters. The whitelist governs what leaks in from the shell acpp
+// happens to have been started in; spec.Env is deliberate per-project
+// configuration, so it is applied afterwards and always survives — a project
+// can set a variable the whitelist would have dropped.
+func buildEnv(spec Spec) []string {
+	env := os.Environ()
+	if spec.Sandbox != nil {
+		env = spec.Sandbox.FilterEnv(env)
+	}
+	return append(env, spec.Env...)
 }
 
 // Process is a running agent subprocess. It owns the OS-level concerns —
@@ -131,9 +147,7 @@ func (m *Manager) Start(parent context.Context, spec Spec) (*Process, error) {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
 	cmd.WaitDelay = 5 * time.Second
-	if len(spec.Env) > 0 {
-		cmd.Env = append(os.Environ(), spec.Env...)
-	}
+	cmd.Env = buildEnv(spec)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

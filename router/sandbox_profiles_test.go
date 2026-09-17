@@ -32,9 +32,9 @@ func projectRouter(t *testing.T, fields map[string]string) (*Router, string) {
 // appear in the argument list, not actually bind.
 func wrapArgs(t *testing.T, r *Router, opts *types.SessionOpts) string {
 	t.Helper()
-	_, sbType, profiles, err := r.resolveProject(context.Background(), opts)
+	_, settings, err := r.resolveProject(context.Background(), opts)
 	require.NoError(t, err)
-	require.NoError(t, r.resolveSandbox(opts, sbType, profiles))
+	require.NoError(t, r.resolveSandbox(opts, settings))
 	require.NotNil(t, opts.Sandbox, "resolveSandbox should have built a sandbox")
 	name, args := opts.Sandbox.Wrap("sh", []string{"-c", "true"})
 	return name + " " + strings.Join(args, " ")

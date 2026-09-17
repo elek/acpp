@@ -16,7 +16,7 @@ func TestNoneSandbox(t *testing.T) {
 }
 
 func TestResolveSandboxNone(t *testing.T) {
-	sb, err := ResolveSandbox("none", "", "/tmp", nil, nil)
+	sb, err := ResolveSandbox("none", "", "/tmp", nil, nil, nil)
 	require.NoError(t, err)
 	cmd, args := sb.Wrap("echo", []string{"hello"})
 	require.Equal(t, "echo", cmd)
@@ -33,7 +33,7 @@ sandbox:
 `), 0o644)
 	require.NoError(t, err)
 
-	sb, err := ResolveSandbox("", "", "/tmp", nil, nil, configPath)
+	sb, err := ResolveSandbox("", "", "/tmp", nil, nil, nil, configPath)
 	require.NoError(t, err)
 	cmd, _ := sb.Wrap("echo", []string{"hello"})
 	// Empty sandbox type should default to bbwrap, not none
@@ -41,7 +41,7 @@ sandbox:
 }
 
 func TestResolveSandboxUnknown(t *testing.T) {
-	_, err := ResolveSandbox("unknown", "", "/tmp", nil, nil)
+	_, err := ResolveSandbox("unknown", "", "/tmp", nil, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown sandbox type")
 }
@@ -57,7 +57,7 @@ sandbox:
 	require.NoError(t, err)
 
 	sb, err := ResolveSandbox("bbwrap", "", "/tmp",
-		[]string{"/srv/resources:/resources", "/srv/out/abc"}, nil, configPath)
+		[]string{"/srv/resources:/resources", "/srv/out/abc"}, nil, nil, configPath)
 	require.NoError(t, err)
 
 	_, args := sb.Wrap("agent", nil)
@@ -91,7 +91,7 @@ sandbox:
 	require.NoError(t, err)
 
 	sb, err := ResolveSandbox("bbwrap", "", "/tmp",
-		nil, []string{"/srv/repo:/repo", "/srv/work"}, configPath)
+		nil, []string{"/srv/repo:/repo", "/srv/work"}, nil, configPath)
 	require.NoError(t, err)
 
 	_, args := sb.Wrap("agent", nil)
