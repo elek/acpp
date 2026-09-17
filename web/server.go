@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/elek/acpp/db"
+	"github.com/elek/acpp/hook"
 	"github.com/elek/acpp/router"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -38,9 +40,12 @@ func (t *tmplRenderer) Render(w io.Writer, name string, data interface{}, c echo
 	return t.templates.ExecuteTemplate(w, name, data)
 }
 
-// SessionCloser can close a running session by ID.
+// SessionCloser can close a running session by ID. force is the user's explicit
+// "stop anyway" after a close was refused; without it, a close guard may veto
+// the stop (see hook.CloseGuard) and CloseSession returns a
+// *hook.CloseRefusedError naming what would be lost.
 type SessionCloser interface {
-	CloseSession(sessionID string)
+	CloseSession(sessionID string, force bool) error
 }
 
 // SessionCreator can create a new session and return its ID.
@@ -399,7 +404,26 @@ func (s *Server) stopSession(c echo.Context) error {
 	// the persistence subscriber, and a session with no project at all must not
 	// be mistaken for one whose project went empty.
 	project := s.sessionProject(ctx, id)
-	s.closer.CloseSession(id)
+
+	// A close guard can veto the stop — the worktree hook does while the session's
+	// isolated worktree holds uncommitted changes, which stopping would destroy.
+	// The session is left running and the reason goes back to the user, who can
+	// commit the work or repeat the click with force=1 ("Stop anyway").
+	if err := s.closer.CloseSession(id, c.QueryParam("force") == "1"); err != nil {
+		var refused *hook.CloseRefusedError
+		if !errors.As(err, &refused) {
+			return err
+		}
+		if wantsJSON(c) {
+			return c.JSON(http.StatusConflict, map[string]any{
+				"error":   refused.Reason,
+				"refused": true,
+			})
+		}
+		// No-JavaScript fallback: say plainly why nothing happened.
+		return c.String(http.StatusConflict, "Not stopped: "+refused.Reason+
+			"\n\nCommit the changes, or stop it again with ?force=1 to discard them.")
+	}
 
 	// The project window's Stop button posts here with fetch and asks for JSON,
 	// because it needs to know whether any of the project's sessions is still

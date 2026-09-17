@@ -10,6 +10,7 @@ import (
 
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/db"
+	"github.com/elek/acpp/hook"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
@@ -88,6 +89,105 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	// Closing the first session (which never got a worktree) is clean.
 	rt.CloseConversation(m1)
 	require.Equal(t, 0, rt.runningSessionsForDir(repo))
+}
+
+// dirtyWorktreeRouter starts two sessions on one repo so the second lands in an
+// isolated worktree, then leaves an uncommitted file in that worktree. It
+// returns the router, both conversations and the worktree path.
+func dirtyWorktreeRouter(t *testing.T) (rt *Router, m1, m2 types.ConversationMeta, wt string) {
+	t.Helper()
+	repo := initGitRepo(t)
+	rt, project := worktreeRouter(t)
+	t.Cleanup(rt.Close)
+	ctx := context.Background()
+	const agent = `sh -c "cat >/dev/null"`
+
+	m1, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
+	require.NoError(t, err)
+	m2, err = rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
+	require.NoError(t, err)
+
+	wt = filepath.Join(repo, ".worktree", m2.ConversationID)
+	require.DirExists(t, wt)
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+	return rt, m1, m2, wt
+}
+
+// A stop the user asked for is refused while the session's worktree holds
+// uncommitted work, and the session is left fully alive — not half torn down.
+func TestTryCloseConversationRefusedByDirtyWorktree(t *testing.T) {
+	rt, _, m2, wt := dirtyWorktreeRouter(t)
+
+	err := rt.TryCloseConversation(m2)
+
+	var refused *hook.CloseRefusedError
+	require.ErrorAs(t, err, &refused, "a dirty worktree must refuse the close")
+	require.Contains(t, refused.Reason, "notes.txt", "the refusal must say what would be lost")
+	require.DirExists(t, wt, "the worktree must be untouched")
+	require.FileExists(t, filepath.Join(wt, "notes.txt"))
+	require.True(t, rt.Active(m2.ConversationID), "the refused session must stay live")
+	_, ok := rt.Opts(m2.ConversationID)
+	require.True(t, ok, "the refused session must stay registered")
+}
+
+// With nothing to lose, the same stop goes through and cleans up as before.
+func TestTryCloseConversationClosesCleanWorktree(t *testing.T) {
+	repo := initGitRepo(t)
+	rt, project := worktreeRouter(t)
+	t.Cleanup(rt.Close)
+	ctx := context.Background()
+	const agent = `sh -c "cat >/dev/null"`
+
+	_, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
+	require.NoError(t, err)
+	m2, err := rt.Create(ctx, types.SessionOpts{CWD: repo, ProjectID: project, Agent: agent})
+	require.NoError(t, err)
+	wt := filepath.Join(repo, ".worktree", m2.ConversationID)
+	require.DirExists(t, wt)
+
+	require.NoError(t, rt.TryCloseConversation(m2))
+	require.NoDirExists(t, wt, "a clean worktree is removed on close as before")
+	require.False(t, rt.Active(m2.ConversationID))
+}
+
+// "Stop anyway" overrules the veto and tears the worktree down.
+func TestForceCloseConversationRemovesDirtyWorktree(t *testing.T) {
+	rt, _, m2, wt := dirtyWorktreeRouter(t)
+
+	rt.ForceCloseConversation(m2)
+
+	require.NoDirExists(t, wt, "a forced close must remove the worktree")
+	require.False(t, rt.Active(m2.ConversationID))
+}
+
+// Shutdown has nobody to ask, so it leaves uncommitted work on disk rather than
+// destroying it unobserved.
+func TestCloseKeepsDirtyWorktreeOnShutdown(t *testing.T) {
+	rt, _, _, wt := dirtyWorktreeRouter(t)
+
+	rt.Close()
+
+	require.DirExists(t, wt, "shutdown must not destroy uncommitted work")
+	require.FileExists(t, filepath.Join(wt, "notes.txt"))
+}
+
+// The unguarded CloseConversation (scheduler, arena, tck) is likewise
+// non-destructive: it closes the session but keeps the dirty worktree.
+func TestCloseConversationKeepsDirtyWorktree(t *testing.T) {
+	rt, _, m2, wt := dirtyWorktreeRouter(t)
+
+	rt.CloseConversation(m2)
+
+	require.False(t, rt.Active(m2.ConversationID), "the session is closed")
+	require.DirExists(t, wt, "but its uncommitted work is kept")
+}
+
+// A conversation with no worktree at all is closed without a murmur.
+func TestTryCloseConversationWithoutWorktree(t *testing.T) {
+	rt, m1, _, _ := dirtyWorktreeRouter(t)
+
+	require.NoError(t, rt.TryCloseConversation(m1), "the repo session has no worktree to guard")
+	require.False(t, rt.Active(m1.ConversationID))
 }
 
 // TestWorktreeHookAnnouncesWorktree verifies that when the worktree hook

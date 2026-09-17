@@ -271,19 +271,32 @@ func (c *WebChannel) reportSubmitErr(sessionID string, err error) {
 	c.publish(sessionID, "text_message", ep)
 }
 
-// CloseSession shuts down the conversation backing sessionID. Implements
-// SessionCloser.
-func (c *WebChannel) CloseSession(sessionID string) {
+// CloseSession shuts down the conversation backing sessionID. Without force it
+// goes through the router's close guards, and a veto (uncommitted changes in the
+// session's ephemeral worktree) comes back as a *hook.CloseRefusedError with the
+// session left running and still mapped, so the caller can offer to force it.
+// Implements SessionCloser.
+func (c *WebChannel) CloseSession(sessionID string, force bool) error {
 	c.mu.Lock()
 	conv, ok := c.byID[sessionID]
-	if ok {
-		delete(c.byID, sessionID)
-	}
 	c.mu.Unlock()
 	if !ok {
-		return
+		return nil
 	}
-	c.router.CloseConversation(conv)
+	if !force {
+		// The mapping is dropped only once the close is certain: a refused session is
+		// still live, and dropping it here would leave it unreachable — unstoppable
+		// even with "Stop anyway".
+		if err := c.router.TryCloseConversation(conv); err != nil {
+			return err
+		}
+	} else {
+		c.router.ForceCloseConversation(conv)
+	}
+	c.mu.Lock()
+	delete(c.byID, sessionID)
+	c.mu.Unlock()
+	return nil
 }
 
 var errUnknownSession = unknownSessionError{}

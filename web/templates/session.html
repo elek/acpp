@@ -141,7 +141,7 @@
     <dt>ID</dt><dd>{{.Session.ID}}</dd>
     <dt>Source</dt><dd>{{.Session.SourceName}}</dd>
     <dt>Agent</dt><dd>{{.Session.Agent}}</dd>
-    <dt>Status</dt><dd><span class="status status-{{.Session.Status}}">&#x2022; {{.Session.Status}}</span>{{if eq .Session.Status "running"}} <form method="POST" action="/session/{{.Session.ID}}/stop" style="display:inline;margin-left:0.75em"><button type="submit" class="stop-btn">Stop</button></form>{{end}}</dd>
+    <dt>Status</dt><dd><span class="status status-{{.Session.Status}}">&#x2022; {{.Session.Status}}</span>{{if eq .Session.Status "running"}} <form id="stop-form" method="POST" action="/session/{{.Session.ID}}/stop" style="display:inline;margin-left:0.75em"><button type="submit" class="stop-btn">Stop</button></form>{{end}}</dd>
     <dt>Model</dt><dd>{{.Session.Model}}</dd>
     <dt>Dir</dt><dd>{{.Session.Dir}}</dd>
     <dt>Git Commit</dt><dd><code>{{.Session.GitCommit}}</code></dd>
@@ -916,5 +916,43 @@
 })();
 </script>
 {{end}}
+<script>
+// Stopping a session that works in an ephemeral git worktree is refused (409)
+// while that worktree holds uncommitted changes, since the stop would delete
+// them. Show what would be lost and stop only if the user insists; without JS
+// the plain form post still works and the 409 explains itself.
+(function() {
+  var form = document.getElementById('stop-form');
+  if (!form) return;
+
+  function postStop(url) {
+    return fetch(url, { method: 'POST', headers: { 'Accept': 'application/json' } })
+      .then(function(r) {
+        return r.json().catch(function() { return {}; }).then(function(body) {
+          return { status: r.status, body: body };
+        });
+      });
+  }
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var btn = form.querySelector('button');
+    if (btn) btn.disabled = true;
+    postStop(form.action).then(function(res) {
+      if (res.status === 409 && res.body && res.body.refused) {
+        if (!window.confirm(res.body.error + '\n\nStop anyway and discard those changes?')) {
+          if (btn) btn.disabled = false;
+          return;
+        }
+        return postStop(form.action + '?force=1').then(function() { window.location.reload(); });
+      }
+      window.location.reload();
+    }).catch(function(err) {
+      alert('Failed to stop: ' + err.message);
+      if (btn) btn.disabled = false;
+    });
+  });
+})();
+</script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/types"
@@ -109,10 +110,168 @@ func TestWorktreeHookContentionCreatesWorktree(t *testing.T) {
 	require.Contains(t, string(exclude), ".worktree")
 
 	// Teardown removes the worktree but keeps the branch.
-	cleanup()
+	cleanup(false)
 	require.False(t, worktreeExists(t, repo, wt), "worktree must be removed on cleanup")
 	require.NoDirExists(t, wt)
 	require.True(t, branchExists(t, repo, "conv2"), "branch must survive teardown")
+}
+
+// contendedWorktree sets up a worktree'd session and returns the hook, the repo,
+// the worktree path and its teardown func.
+func contendedWorktree(t *testing.T, convID string) (h *WorktreeHook, repo, wt string, cleanup func(bool)) {
+	t.Helper()
+	repo = initRepo(t)
+	h = NewWorktreeHook(".worktree")
+	opts := &types.SessionOpts{CWD: repo}
+	sc := SessionContext{
+		ConversationID:        convID,
+		BaseDir:               repo,
+		RunningSessionsForDir: func(string) int { return 1 },
+	}
+	cleanup, err := h.SetupSession(sc, opts)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	return h, repo, opts.CWD, cleanup
+}
+
+// A session that never got a worktree has nothing to lose, so it never vetoes.
+func TestWorktreeHookCanCloseWithoutWorktree(t *testing.T) {
+	repo := initRepo(t)
+	h := NewWorktreeHook(".worktree")
+	opts := &types.SessionOpts{CWD: repo}
+	sc := SessionContext{
+		ConversationID:        "conv1",
+		BaseDir:               repo,
+		RunningSessionsForDir: func(string) int { return 0 }, // no contention
+	}
+	_, err := h.SetupSession(sc, opts)
+	require.NoError(t, err)
+
+	require.Empty(t, h.CanClose(), "a session with no worktree must never veto a close")
+}
+
+// A worktree with nothing to save closes without argument.
+func TestWorktreeHookCanCloseCleanWorktree(t *testing.T) {
+	h, _, _, cleanup := contendedWorktree(t, "conv2")
+	defer cleanup(true)
+
+	require.Empty(t, h.CanClose(), "a clean worktree must not veto a close")
+}
+
+// A file the agent wrote but never committed is exactly what must not be lost.
+func TestWorktreeHookCanCloseVetoesUntrackedFile(t *testing.T) {
+	h, _, wt, cleanup := contendedWorktree(t, "conv2")
+	defer cleanup(true)
+
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+
+	reason := h.CanClose()
+	require.NotEmpty(t, reason, "an untracked file must veto the close")
+	require.Contains(t, reason, wt, "the reason must name the worktree")
+	require.Contains(t, reason, "notes.txt", "the reason must name the changed file")
+}
+
+// An edit to a tracked file vetoes just the same.
+func TestWorktreeHookCanCloseVetoesModifiedFile(t *testing.T) {
+	h, _, wt, cleanup := contendedWorktree(t, "conv2")
+	defer cleanup(true)
+
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "README"), []byte("changed"), 0o644))
+
+	reason := h.CanClose()
+	require.NotEmpty(t, reason, "a modified tracked file must veto the close")
+	require.Contains(t, reason, "README")
+}
+
+// Work that is committed to the ephemeral branch is not at risk — the branch
+// survives teardown — so it must not block the stop.
+func TestWorktreeHookCanCloseIgnoresCommittedWork(t *testing.T) {
+	h, _, wt, cleanup := contendedWorktree(t, "conv2")
+	defer cleanup(true)
+
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+	gitIn(t, wt, "add", "notes.txt")
+	gitIn(t, wt, "commit", "-m", "wip")
+
+	require.Empty(t, h.CanClose(), "committed work must not veto a close")
+}
+
+// Routine teardown must never destroy uncommitted work: the directory, its
+// registration and its branch all survive so the changes can be recovered.
+func TestWorktreeHookCleanupKeepsDirtyWorktree(t *testing.T) {
+	h, repo, wt, cleanup := contendedWorktree(t, "conv2")
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+
+	cleanup(false)
+
+	require.DirExists(t, wt, "a dirty worktree must survive an unforced teardown")
+	require.True(t, worktreeExists(t, repo, wt), "it must stay registered so git can still reach it")
+	require.True(t, branchExists(t, repo, "conv2"), "branch must survive")
+	require.FileExists(t, filepath.Join(wt, "notes.txt"), "the uncommitted file must still be there")
+	require.NotEmpty(t, h.CanClose(), "the veto still stands after an unforced teardown")
+}
+
+// "Stop anyway" overrules the veto: the worktree goes, the branch stays.
+func TestWorktreeHookForcedCleanupRemovesDirtyWorktree(t *testing.T) {
+	_, repo, wt, cleanup := contendedWorktree(t, "conv2")
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+
+	cleanup(true)
+
+	require.NoDirExists(t, wt, "a forced teardown must remove the worktree")
+	require.False(t, worktreeExists(t, repo, wt))
+	require.True(t, branchExists(t, repo, "conv2"), "branch must survive even a forced teardown")
+}
+
+// A clean worktree is removed by routine teardown, as before.
+func TestWorktreeHookCleanupRemovesCleanWorktree(t *testing.T) {
+	_, repo, wt, cleanup := contendedWorktree(t, "conv2")
+
+	cleanup(false)
+
+	require.NoDirExists(t, wt)
+	require.True(t, branchExists(t, repo, "conv2"))
+}
+
+// A broken git check must not wedge a session you can never close: if the
+// worktree directory is gone from under us, the hook stops vetoing.
+func TestWorktreeHookCanCloseSafeWhenGitFails(t *testing.T) {
+	h, _, wt, _ := contendedWorktree(t, "conv2")
+	require.NoError(t, os.RemoveAll(wt))
+
+	require.Empty(t, h.CanClose(), "an unreadable worktree must not veto the close")
+}
+
+// A git that never answers must not hang the stop the user is waiting on: the
+// check gives up and lets the close proceed.
+func TestWorktreeHookCanCloseGivesUpOnHangingGit(t *testing.T) {
+	h, _, _, _ := contendedWorktree(t, "conv2")
+
+	// A "git" that hangs forever, ahead of the real one on PATH.
+	bin := t.TempDir()
+	script := "#!/bin/sh\nsleep 300\n"
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	done := make(chan string, 1)
+	go func() { done <- h.CanClose() }()
+	select {
+	case reason := <-done:
+		require.Empty(t, reason, "a git that cannot answer must not veto the close")
+	case <-time.After(gitTimeout + 5*time.Second):
+		t.Fatal("CanClose hung on an unresponsive git")
+	}
+}
+
+// gitIn runs a git command inside dir, failing the test on error.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
 }
 
 func TestWorktreeHookCustomLocation(t *testing.T) {
@@ -128,7 +287,7 @@ func TestWorktreeHookCustomLocation(t *testing.T) {
 	cleanup, err := h.SetupSession(sc, opts)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
-	defer cleanup()
+	defer cleanup(false)
 
 	require.Equal(t, filepath.Join(repo, "trees", "conv3"), opts.CWD)
 }
@@ -141,6 +300,8 @@ func TestWorktreeHookImplementsHook(t *testing.T) {
 	require.Equal(t, msg, h.Incoming(HookContext{}, msg))
 	_, ok := h.(SessionHook)
 	require.True(t, ok, "WorktreeHook must implement SessionHook")
+	_, ok = h.(CloseGuard)
+	require.True(t, ok, "WorktreeHook must implement CloseGuard")
 }
 
 // The hook is registered under "worktree" and honors the location param.

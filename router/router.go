@@ -141,15 +141,31 @@ type SessionState struct {
 	baseDir string
 	// cleanups are session-hook teardown funcs, run exactly once (guarded by
 	// cleanupOnce) when the conversation is finalized. Immutable after Create.
-	cleanups    []func()
+	cleanups    []func(bool)
 	cleanupOnce sync.Once
+	// guards are this conversation's close guards — the subset of hooks that can
+	// veto a deliberate close. Immutable after Create.
+	guards []hook.CloseGuard
 }
 
 // runCleanups runs this session's hook teardown funcs exactly once, in reverse
 // order. Safe to call from any finalize path (deliberate close, subprocess-exit
-// watcher, or a failed Create).
-func (s *SessionState) runCleanups() {
-	s.cleanupOnce.Do(func() { runCleanups(s.cleanups) })
+// watcher, or a failed Create). force is true only when the user explicitly
+// overruled a close guard; see hook.SessionHook.
+func (s *SessionState) runCleanups(force bool) {
+	s.cleanupOnce.Do(func() { runCleanups(s.cleanups, force) })
+}
+
+// refusal asks every close guard whether this conversation may be closed and
+// returns the first veto, or nil when all of them consent. Guards run git and
+// other slow checks, so call this with Router.mu released.
+func (s *SessionState) refusal() error {
+	for _, g := range s.guards {
+		if reason := g.CanClose(); reason != "" {
+			return &hook.CloseRefusedError{Reason: reason}
+		}
+	}
+	return nil
 }
 
 // OnShutdown registers the cancel function the /exit command invokes to shut the
@@ -191,7 +207,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	// so a hook may redirect opts.CWD and add opts.RWBinds. Each returns a cleanup
 	// func run when the conversation is finalized. On error, unwind the cleanups
 	// already collected and abort before starting anything.
-	var cleanups []func()
+	var cleanups []func(bool)
 	// Harness notices queued by session hooks (via sc.Notify) are emitted after the
 	// conversation is announced so they land as its first messages, in order.
 	var notices []string
@@ -209,7 +225,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		}
 		cleanup, err := sh.SetupSession(sc, &opts)
 		if err != nil {
-			runCleanups(cleanups)
+			runCleanups(cleanups, false)
 			return types.ConversationMeta{}, err
 		}
 		if cleanup != nil {
@@ -217,9 +233,18 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		}
 	}
 
+	// Close guards are collected after setup, since a hook only knows what it has
+	// to protect once it has set it up.
+	var guards []hook.CloseGuard
+	for _, h := range hooks {
+		if g, ok := h.(hook.CloseGuard); ok {
+			guards = append(guards, g)
+		}
+	}
+
 	// Build the sandbox now that opts.CWD / opts.RWBinds reflect any redirection.
 	if err := r.resolveSandbox(&opts, sbType, profiles); err != nil {
-		runCleanups(cleanups)
+		runCleanups(cleanups, false)
 		return types.ConversationMeta{}, err
 	}
 
@@ -230,7 +255,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		Sandbox: opts.Sandbox,
 	})
 	if err != nil {
-		runCleanups(cleanups)
+		runCleanups(cleanups, false)
 		return types.ConversationMeta{}, err
 	}
 
@@ -247,6 +272,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		hooks:    hooks,
 		baseDir:  baseDir,
 		cleanups: cleanups,
+		guards:   guards,
 	}
 
 	r.mu.Lock()
@@ -302,7 +328,7 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		delete(r.sessions, convID)
 		r.mu.Unlock()
 		ps.Close()
-		state.runCleanups()
+		state.runCleanups(false)
 		return types.ConversationMeta{}, err
 	}
 
@@ -344,7 +370,7 @@ func (r *Router) CreateError(ctx context.Context, opts types.SessionOpts, errMsg
 			},
 		},
 	})
-	r.closeConversation(meta, errMsg)
+	r.closeConversation(meta, errMsg, false)
 	return meta
 }
 
@@ -473,10 +499,10 @@ func (r *Router) runningSessionsForDir(dir string) int {
 
 // runCleanups invokes cleanup funcs in reverse of the order they were collected,
 // skipping nils. Used for session-hook teardown.
-func runCleanups(cleanups []func()) {
+func runCleanups(cleanups []func(bool), force bool) {
 	for i := len(cleanups) - 1; i >= 0; i-- {
 		if cleanups[i] != nil {
-			cleanups[i]()
+			cleanups[i](force)
 		}
 	}
 }
@@ -804,8 +830,44 @@ func (r *Router) deliver(ctx context.Context, state *SessionState, rid *json.Raw
 // CloseConversation shuts down the subprocess backing a single conversation and
 // removes it from the router, leaving every other conversation running. It is a
 // no-op for an unknown id.
+//
+// Close guards are not consulted, but teardown is non-destructive: a hook
+// holding state a guard would have vetoed on (uncommitted changes in an
+// ephemeral worktree) keeps it. Use TryCloseConversation for a close the user
+// asked for, and ForceCloseConversation once they have confirmed it.
 func (r *Router) CloseConversation(id types.ConversationMeta) {
-	r.closeConversation(id, "")
+	r.closeConversation(id, "", false)
+}
+
+// TryCloseConversation closes a conversation on a user's behalf, first asking
+// every close guard whether it may go. If one vetoes — the worktree hook does
+// while its isolated worktree has uncommitted changes — nothing is torn down,
+// the conversation stays live, and a *hook.CloseRefusedError carrying the
+// guard's reason is returned for the user to act on or overrule. It is a no-op
+// for an unknown id.
+func (r *Router) TryCloseConversation(id types.ConversationMeta) error {
+	r.mu.RLock()
+	state, ok := r.sessions[id.ConversationID]
+	r.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	// Guards shell out to git, so they run with the lock released. A guard's answer
+	// can go stale between here and the close (the agent is still running); that is
+	// inherent to asking, and the window is the same one the user sees.
+	if err := state.refusal(); err != nil {
+		return err
+	}
+	r.closeConversation(id, "", false)
+	return nil
+}
+
+// ForceCloseConversation closes a conversation without consulting its close
+// guards and tears down everything they protect — the "stop anyway" a user
+// confirms after TryCloseConversation refused. Call it only on that explicit
+// confirmation: it is the one path that discards uncommitted work.
+func (r *Router) ForceCloseConversation(id types.ConversationMeta) {
+	r.closeConversation(id, "", true)
 }
 
 // closeConversation removes a conversation and fans a ConversationClosed to
@@ -817,7 +879,10 @@ func (r *Router) CloseConversation(id types.ConversationMeta) {
 // delete makes it safe for concurrent callers (a deliberate close racing the
 // subprocess-exit watcher): only the caller that removes the conversation fans
 // the event. It is a no-op for an unknown id.
-func (r *Router) closeConversation(id types.ConversationMeta, errMsg string) {
+// force is passed through to session-hook teardown: true only when the user
+// explicitly overruled a close guard, so every other caller (crash, shutdown,
+// scheduler) leaves guarded state intact.
+func (r *Router) closeConversation(id types.ConversationMeta, errMsg string, force bool) {
 	r.mu.Lock()
 	state, ok := r.sessions[id.ConversationID]
 	if ok {
@@ -834,7 +899,7 @@ func (r *Router) closeConversation(id types.ConversationMeta, errMsg string) {
 	}
 	// Session-hook teardown runs after the agent process is gone so nothing in the
 	// worktree is still held open when it is removed.
-	state.runCleanups()
+	state.runCleanups(force)
 }
 
 // watchProcess finalizes a conversation whose agent subprocess exits before the
@@ -866,7 +931,9 @@ func (r *Router) watchProcess(state *SessionState, ps *process.Process) {
 	}
 	slog.Warn("agent subprocess exited before its conversation was closed; finalizing",
 		"conversation_id", meta.ConversationID, "pid", meta.ProcessPID)
-	r.closeConversation(meta, "agent subprocess exited before completing the turn")
+	// force=false: a crash has nobody behind it to confirm discarding whatever the
+	// agent left uncommitted, so guarded state is kept.
+	r.closeConversation(meta, "agent subprocess exited before completing the turn", false)
 }
 
 // Close shuts every conversation's subprocess down gracefully and releases the
@@ -884,8 +951,9 @@ func (r *Router) Close() {
 	// Finalize each conversation through the guarded path so subscribers see
 	// exactly one ConversationClosed per conversation even though CloseAll above
 	// has woken every subprocess-exit watcher, which races us to finalize.
+	// force=false: shutdown likewise destroys nothing a close guard protects.
 	for _, meta := range metas {
-		r.closeConversation(meta, "")
+		r.closeConversation(meta, "", false)
 	}
 	r.cancel()
 }

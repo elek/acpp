@@ -74,9 +74,40 @@ type SessionContext struct {
 // sandbox is resolved and the subprocess starts, so it may mutate opts.CWD and
 // append to opts.RWBinds. The returned cleanup func (may be nil) runs exactly
 // once when the session's process closes. A non-nil error aborts creation.
+//
+// cleanup's force argument says whether the user has explicitly overruled a
+// CloseGuard veto ("stop anyway"). force is true ONLY on that deliberate,
+// confirmed close; routine teardown — a crash, application shutdown, a
+// scheduled job finishing — always passes false, and a hook holding state a
+// CloseGuard would have vetoed on must then leave it in place rather than
+// destroy it unobserved.
 type SessionHook interface {
-	SetupSession(sc SessionContext, opts *types.SessionOpts) (cleanup func(), err error)
+	SetupSession(sc SessionContext, opts *types.SessionOpts) (cleanup func(force bool), err error)
 }
+
+// CloseGuard is an OPTIONAL interface a Hook may also implement to veto a
+// deliberate close. The router calls CanClose on every guard before closing a
+// conversation on a user's request; a non-empty return refuses the close and is
+// shown to whoever asked for it, so it should read as a sentence explaining what
+// would be lost. Guards are NOT consulted when a conversation is finalized
+// without a user behind it (subprocess crash, shutdown) — there is nobody there
+// to answer — so a guard must be paired with teardown that declines to destroy
+// the same state when cleanup's force is false.
+//
+// A guard that cannot determine its state must return "" rather than guess: a
+// veto nobody can clear is a session that can never be stopped.
+type CloseGuard interface {
+	CanClose() string
+}
+
+// CloseRefusedError reports that a CloseGuard vetoed a close. Reason is the
+// guard's own words and is meant to be shown to the user, who can act on it
+// (commit the work) or overrule it with a forced close.
+type CloseRefusedError struct {
+	Reason string
+}
+
+func (e *CloseRefusedError) Error() string { return e.Reason }
 
 // HookFactory builds a Hook from its configured params (per the spec: a
 // map[string]string maps to an interface implementation).

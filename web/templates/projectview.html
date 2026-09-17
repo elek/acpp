@@ -1314,28 +1314,52 @@
     // alternative — staying on the dead conversation — is a trap, since any
     // reopen of the project starts a fresh pending session and lands you in what
     // looks like the same window again.
+    //
+    // A session working in an ephemeral git worktree refuses the stop (409) while
+    // that worktree holds uncommitted changes, which the stop would delete. The
+    // session stays live; the user either commits the work or confirms, and only
+    // then is it stopped with force=1.
     if (stopFormEl) {
-      stopFormEl.addEventListener('submit', function(e) {
-        e.preventDefault();
-        var stopBtn = document.getElementById('stop-btn');
-        var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
-        if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
-        fetch(stopFormEl.action, {
+      var postStop = function(url) {
+        return fetch(url, {
           method: 'POST',
           headers: { 'Accept': 'application/json' }
         }).then(function(r) {
           // A non-JSON body (older/stub server, or an error reply) just means we
           // cannot tell whether the project went empty: keep the window.
-          return r.json().catch(function() { return {}; });
-        }).then(function(res) {
-          if (res && res.project_live === false) {
+          return r.json().catch(function() { return {}; }).then(function(body) {
+            return { status: r.status, body: body };
+          });
+        });
+      };
+
+      stopFormEl.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var stopBtn = document.getElementById('stop-btn');
+        var stopLabel = stopBtn ? stopBtn.querySelector('.btn-label') : null;
+        var resetBtn = function() {
+          if (stopBtn) { stopBtn.disabled = false; if (stopLabel) stopLabel.textContent = 'Stop'; }
+        };
+        var applyStopped = function(res) {
+          if (res.body && res.body.project_live === false) {
             window.location.href = '/projects';
             return;
           }
           finalizeSession('stopped', 'status-complete');
+        };
+        if (stopBtn) { stopBtn.disabled = true; if (stopLabel) stopLabel.textContent = 'Stopping...'; }
+        postStop(stopFormEl.action).then(function(res) {
+          if (res.status === 409 && res.body && res.body.refused) {
+            if (!window.confirm(res.body.error + '\n\nStop anyway and discard those changes?')) {
+              resetBtn();
+              return;
+            }
+            return postStop(stopFormEl.action + '?force=1').then(applyStopped);
+          }
+          applyStopped(res);
         }).catch(function(err) {
           alert('Failed to stop: ' + err.message);
-          if (stopBtn) { stopBtn.disabled = false; if (stopLabel) stopLabel.textContent = 'Stop'; }
+          resetBtn();
         });
       });
     }
