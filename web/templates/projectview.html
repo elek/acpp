@@ -411,6 +411,7 @@
   </div>
 </div>
 
+{{template "promptDraftScript" .}}
 <script>
 (function() {
   var activeProject = '{{.ActiveProject}}';
@@ -1013,6 +1014,69 @@
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     }
 
+    // Unsent draft, so a half-typed prompt survives switching taskbar tabs
+    // (plain links — a full page load). Attachments are deliberately not part
+    // of a draft: they are data URLs, and a couple of screenshots would blow
+    // the localStorage quota and take the text down with them.
+    //
+    // The key is computed per call, never captured: `sessionId` is reassigned
+    // in place by /clear and by the create-session path, and a captured key
+    // would write this window's draft under a session that has moved on. A
+    // project window with no session yet keys on the project instead — the
+    // first prompt on a fresh project is the most draft-losing state there is.
+    function draftKey() {
+      if (sessionId) return sessionId;
+      return projectDraftKey();
+    }
+    function projectDraftKey() {
+      return activeProject ? 'project:' + activeProject : '';
+    }
+    var draftTimer = null;
+    function saveDraftSoon() {
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(function() {
+        draftTimer = null;
+        window.acppDraft.save(draftKey(), input.value);
+      }, 300);
+    }
+    function flushDraft() {
+      if (!draftTimer) return;
+      clearTimeout(draftTimer);
+      draftTimer = null;
+      window.acppDraft.save(draftKey(), input.value);
+    }
+    // clearDraft drops the draft for good, under the key it was actually saved
+    // under — the caller passes it, because by the time the create-session path
+    // clears the textarea `sessionId` is already the new session and draftKey()
+    // no longer returns the project key the draft lives under. The pending
+    // debounce is cancelled first, or it would fire afterwards and resurrect
+    // what was just sent.
+    function clearDraft(key) {
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      window.acppDraft.clear(key);
+    }
+    // Navigating away can beat the debounce, which is exactly the case this
+    // feature exists for, so flush the pending write on the way out.
+    window.addEventListener('pagehide', flushDraft);
+
+    // Restore. A draft saved before this window had a session lives under the
+    // project key, and re-opening the project auto-opens a pending session — so
+    // looking only under the session key would miss exactly the draft this is
+    // meant to save. Fall back to the project key and adopt it into this
+    // session, deleting the project entry so it cannot resurface in a later one.
+    var restoredDraft = window.acppDraft.read(draftKey());
+    if (!restoredDraft && sessionId) {
+      restoredDraft = window.acppDraft.read(projectDraftKey());
+      if (restoredDraft) {
+        window.acppDraft.clear(projectDraftKey());
+        window.acppDraft.save(sessionId, restoredDraft);
+      }
+    }
+    if (restoredDraft && !input.value) {
+      input.value = restoredDraft;
+      autoResize();
+    }
+
     // Staged images, held in-memory until the prompt is sent. Each entry is
     // { id, dataUrl } where dataUrl is a full "data:<mime>;base64,<data>" string.
     var attachEls = {
@@ -1082,6 +1146,10 @@
       var text = input.value.trim();
       if ((!text && attachments.length === 0) || sending) return;
       var images = currentImages();
+      // Captured before either path runs: the create-session path reassigns
+      // sessionId, so this is the only way to delete the entry the draft was
+      // actually stored under.
+      var submittedKey = draftKey();
 
       // If we have a running session, send prompt to it
       if (sessionId && isSessionRunning) {
@@ -1100,6 +1168,7 @@
           });
         }).then(function(data) {
           input.value = '';
+          clearDraft(submittedKey);
           clearAttachments();
           autoResize();
           if (data.status === 'command') {
@@ -1216,6 +1285,7 @@
           connectWebSocket();
 
           input.value = '';
+          clearDraft(submittedKey);
           clearAttachments();
           autoResize();
           btn.textContent = 'Send';
@@ -1391,7 +1461,10 @@
     input.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
     });
-    input.addEventListener('input', autoResize);
+    input.addEventListener('input', function() {
+      autoResize();
+      saveDraftSoon();
+    });
 
     // Paste: stage any image items from the clipboard. Plain-text paste falls
     // through to the textarea untouched.

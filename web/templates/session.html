@@ -698,6 +698,7 @@
   </div>
   <div class="prompt-bar-hint">Press Enter to send, Shift+Enter for newline · paste, drop, or 📎 to attach images</div>
 </div>
+{{template "promptDraftScript" .}}
 <script>
 (function() {
   var input = document.getElementById('prompt-input');
@@ -718,6 +719,40 @@
   function autoResize() {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  }
+
+  // Unsent draft, keyed on this page's session. Restored on load, saved as you
+  // type, dropped once the prompt is sent. Attachments are deliberately not
+  // part of a draft: they are data URLs, and a couple of screenshots would blow
+  // the localStorage quota and take the text down with them.
+  var draftTimer = null;
+  function saveDraftSoon() {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(function() {
+      draftTimer = null;
+      window.acppDraft.save(sessionId, input.value);
+    }, 300);
+  }
+  function flushDraft() {
+    if (!draftTimer) return;
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    window.acppDraft.save(sessionId, input.value);
+  }
+  // clearDraft drops the draft for good. The pending debounce is cancelled
+  // first, or it would fire afterwards and resurrect what was just sent.
+  function clearDraft() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    window.acppDraft.clear(sessionId);
+  }
+  // Navigating away can beat the debounce, which is exactly the case this
+  // feature exists for, so flush the pending write on the way out.
+  window.addEventListener('pagehide', flushDraft);
+
+  var restored = window.acppDraft.read(sessionId);
+  if (restored && !input.value) {
+    input.value = restored;
+    autoResize();
   }
 
   // renderAttachments rebuilds the thumbnail strip from the staged list.
@@ -789,6 +824,7 @@
       });
     }).then(function(data) {
       input.value = '';
+      clearDraft();
       attachments = [];
       renderAttachments();
       autoResize();
@@ -848,7 +884,10 @@
     }
   });
 
-  input.addEventListener('input', autoResize);
+  input.addEventListener('input', function() {
+    autoResize();
+    saveDraftSoon();
+  });
 
   // Paste: stage any image items from the clipboard. Plain-text paste falls
   // through to the textarea untouched.

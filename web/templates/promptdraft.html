@@ -1,0 +1,75 @@
+{{define "promptDraftScript"}}
+<script>
+// Unsent prompt drafts, so a half-typed prompt survives leaving the page. The
+// bottom taskbar tabs are plain links, so switching project/session is a full
+// page load and the textarea is thrown away with the document.
+//
+// Storage is one localStorage key holding { <draftKey>: { text, savedAt } }.
+// Drafts are keyed per session (a half-typed thought in one session must not
+// clobber another's); the templates supply the key, since a project window with
+// no session yet has no session id to key on.
+//
+// Every access is wrapped: localStorage throws in private modes and when the
+// origin is over quota, and none of that may break the prompt bar. A failed
+// write degrades to "this draft is not saved", never to lost keystrokes.
+window.acppDraft = (function() {
+  var KEY = 'acpp.promptDrafts';
+  // Bounds the blob without picking an arbitrary expiry window. Drafts are
+  // either picked up within minutes or never.
+  var MAX = 50;
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object') ? parsed : {};
+    } catch (e) { return {}; }
+  }
+
+  function store(drafts) {
+    try { localStorage.setItem(KEY, JSON.stringify(drafts)); } catch (e) {}
+  }
+
+  return {
+    // read returns the saved draft text for key, or '' if there is none.
+    read: function(key) {
+      if (!key) return '';
+      var entry = load()[key];
+      return (entry && typeof entry.text === 'string') ? entry.text : '';
+    },
+
+    // save records text under key. Blank text deletes the entry rather than
+    // storing an empty string, so clearing the box also clears the draft.
+    save: function(key, text) {
+      if (!key) return;
+      var drafts = load();
+      if (!text || !text.trim()) {
+        if (!(key in drafts)) return;
+        delete drafts[key];
+      } else {
+        drafts[key] = { text: text, savedAt: Date.now() };
+      }
+      var keys = Object.keys(drafts);
+      if (keys.length > MAX) {
+        keys.sort(function(a, b) {
+          return (drafts[a].savedAt || 0) - (drafts[b].savedAt || 0);
+        });
+        keys.slice(0, keys.length - MAX).forEach(function(k) { delete drafts[k]; });
+      }
+      store(drafts);
+    },
+
+    // clear drops the draft for key. Called once a prompt is actually sent:
+    // a submitted draft is no longer a draft.
+    clear: function(key) {
+      if (!key) return;
+      var drafts = load();
+      if (!(key in drafts)) return;
+      delete drafts[key];
+      store(drafts);
+    }
+  };
+})();
+</script>
+{{end}}

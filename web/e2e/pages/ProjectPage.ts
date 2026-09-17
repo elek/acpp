@@ -98,6 +98,15 @@ export class ProjectPage {
     await expect(this.promptInput).toBeVisible();
   }
 
+  // gotoSession opens one specific session of a project — the full page load a
+  // taskbar session dot performs.
+  async gotoSession(project: string, session: string): Promise<void> {
+    await this.page.goto(
+      `/projects?project=${encodeURIComponent(project)}&session=${encodeURIComponent(session)}`,
+    );
+    await expect(this.promptInput).toBeVisible();
+  }
+
   // gotoProjects opens the bare project list (no active project). The bottom tab
   // bar and its "+" new-project button are always present; the prompt bar is not.
   async gotoProjects(): Promise<void> {
@@ -146,6 +155,49 @@ export class ProjectPage {
     }, text);
     await expect(this.promptInput).toHaveValue(text);
     await this.sendButton.click();
+  }
+
+  // typeDraft fills the prompt box WITHOUT sending, then waits until the draft
+  // has actually been written to localStorage. Saving is debounced, so a test
+  // that navigated immediately would be racing the write it means to verify.
+  async typeDraft(text: string, key: string): Promise<void> {
+    await this.promptInput.evaluate((el, v) => {
+      const ta = el as HTMLTextAreaElement;
+      ta.value = v;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }, text);
+    await expect(this.promptInput).toHaveValue(text);
+    await expect.poll(() => this.storedDraft(key)).toBe(text);
+  }
+
+  // seedDraft writes a draft entry directly, for states that are awkward to
+  // reach by typing — notably a draft saved under the project key, which only
+  // happens while a project window has no session yet.
+  async seedDraft(key: string, text: string): Promise<void> {
+    await this.page.evaluate(
+      ({ k, t }) => {
+        const raw = localStorage.getItem('acpp.promptDrafts');
+        const drafts = raw ? JSON.parse(raw) : {};
+        drafts[k] = { text: t, savedAt: Date.now() };
+        localStorage.setItem('acpp.promptDrafts', JSON.stringify(drafts));
+      },
+      { k: key, t: text },
+    );
+  }
+
+  // storedDraft reads one entry out of the persisted draft blob, so tests can
+  // assert on the storage contract itself and not only on what the box shows.
+  async storedDraft(key: string): Promise<string> {
+    return this.page.evaluate((k) => {
+      try {
+        const raw = localStorage.getItem('acpp.promptDrafts');
+        if (!raw) return '';
+        const entry = JSON.parse(raw)[k];
+        return entry && typeof entry.text === 'string' ? entry.text : '';
+      } catch {
+        return '';
+      }
+    }, key);
   }
 
   // attachImage stages an image via the hidden file input (the same code path as
