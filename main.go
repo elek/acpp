@@ -14,6 +14,7 @@ type CLI struct {
 	Read    cli2.Read    `cmd:"" help:"Read a text file (used by sandbox delegation)"`
 	Tck     cli2.Tck     `cmd:"" help:"Test ACP agent binaries and report a compatibility matrix"`
 	Arena   cli2.Arena   `cmd:"" help:"Run several ACP agents on one task in isolated dirs and score the results"`
+	Remote  cli2.Remote  `cmd:"" help:"Run this machine as a remote agent location of an acpp server"`
 }
 
 func main() {

@@ -9,6 +9,7 @@ import (
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/router"
 	"github.com/elek/acpp/types"
+	"github.com/stretchr/testify/require"
 )
 
 // feed runs a sequence of router messages through the persister for a single
@@ -294,4 +295,62 @@ func TestPersister_TypedUsageFromPromptResponse(t *testing.T) {
 	if row.CacheReadInputTokens != 5 {
 		t.Errorf("CacheReadInputTokens = %d, want 5", row.CacheReadInputTokens)
 	}
+}
+
+// A conversation adopted after a server restart is live again and keeps the
+// totals the previous server recorded rather than restarting them from zero.
+func TestPersister_AdoptReopensAndKeepsTotals(t *testing.T) {
+	ctx := context.Background()
+	store := db.NewMemStore()
+	meta := types.ConversationMeta{ConversationID: "conv-a", SessionID: acp.SessionId("sess-a")}
+
+	// The previous server recorded two prompts' worth of usage...
+	require.NoError(t, store.InsertSession(ctx, meta.ConversationID, "web", "agent", "/d", "", "box", "", "p", nil, time.Now()))
+	require.NoError(t, store.UpdateSession(ctx, meta.ConversationID, types.StatusInfo{
+		Status: types.StatusPending, Model: "m1",
+		Usage: types.UsageInfo{InputTokens: 10, OutputTokens: 20, CostUSD: 1.5, PromptCount: 2},
+	}))
+	// ...and this server's startup marked it complete.
+	_, err := store.CompleteRunningSessions(ctx)
+	require.NoError(t, err)
+
+	p := New(router.New(), store)
+	p.Receive(ctx, nil, meta, types.ConversationAdopted{Meta: meta})
+	row, err := store.GetSession(ctx, meta.ConversationID)
+	require.NoError(t, err)
+	require.Equal(t, "pending", row.Status)
+	require.Nil(t, row.FinishedAt)
+
+	p.Receive(ctx, nil, meta, acp.PromptRequest{SessionId: meta.SessionID})
+	p.Receive(ctx, nil, meta, acp.PromptResponse{StopReason: acp.StopReasonEndTurn})
+	p.Receive(ctx, nil, meta, types.ConversationClosed{Meta: meta})
+
+	row, err = store.GetSession(ctx, meta.ConversationID)
+	require.NoError(t, err)
+	require.Equal(t, "complete", row.Status)
+	require.Equal(t, int64(3), row.PromptCount)
+	require.Equal(t, int64(10), row.InputTokens)
+	require.Equal(t, 1.5, row.CostUSD)
+	require.Equal(t, "m1", row.Model)
+}
+
+// Finalizing a conversation this server never tracked (it expired on a remote
+// host while no server was connected) marks it errored without zeroing it.
+func TestPersister_FinishUntrackedKeepsTotals(t *testing.T) {
+	ctx := context.Background()
+	store := db.NewMemStore()
+	require.NoError(t, store.InsertSession(ctx, "conv-x", "web", "agent", "/d", "", "box", "", "p", nil, time.Now()))
+	require.NoError(t, store.UpdateSession(ctx, "conv-x", types.StatusInfo{
+		Status: types.StatusPending, Usage: types.UsageInfo{PromptCount: 4, CostUSD: 2},
+	}))
+
+	p := New(router.New(), store)
+	p.Receive(ctx, nil, types.ConversationMeta{ConversationID: "conv-x"},
+		types.ConversationClosed{Meta: types.ConversationMeta{ConversationID: "conv-x"}, Err: "expired"})
+
+	row, err := store.GetSession(ctx, "conv-x")
+	require.NoError(t, err)
+	require.Equal(t, "error", row.Status)
+	require.Equal(t, int64(4), row.PromptCount)
+	require.Equal(t, 2.0, row.CostUSD)
 }

@@ -15,6 +15,8 @@ import (
 
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/hook"
+	"github.com/elek/acpp/process"
+	"github.com/elek/acpp/remote"
 	"github.com/elek/acpp/router"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -70,6 +72,8 @@ type Server struct {
 	hub         *Hub
 	webChannel  *WebChannel
 	upgrader    websocket.Upgrader
+	// remote is the remote agent hub, nil when remote agents are disabled.
+	remote *remote.Hub
 }
 
 // SessionDefaults holds default values shown in the new-session form.
@@ -198,6 +202,30 @@ func (s *Server) WithRouter(rt *router.Router) *Server {
 // WithRouter was not called.
 func (s *Server) WebChannel() *WebChannel {
 	return s.webChannel
+}
+
+// WithRemote serves the remote agent endpoint (remote.Path) from hub and lets
+// the UI see which locations are connected.
+func (s *Server) WithRemote(hub *remote.Hub) *Server {
+	s.remote = hub
+	s.echo.Any(remote.Path, echo.WrapHandler(hub))
+	return s
+}
+
+// hostFor returns the host a project location runs on, or nil when it is a
+// remote location that is not connected.
+func (s *Server) hostFor(location string) process.Host {
+	if process.IsLocal(location) {
+		return process.Local
+	}
+	if s.remote == nil {
+		return nil
+	}
+	h, err := s.remote.Host(location)
+	if err != nil {
+		return nil
+	}
+	return h
 }
 
 // WithCloser sets a SessionCloser that allows the web UI to stop running sessions.

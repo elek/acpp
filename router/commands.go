@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/sandbox"
 	"github.com/elek/acpp/types"
 )
@@ -157,15 +158,36 @@ func (r *Router) handleShell(ctx context.Context, id types.ConversationMeta, com
 	r.mu.RLock()
 	state, ok := r.sessions[id.ConversationID]
 	var opts types.SessionOpts
+	var host process.Host
+	var streamID string
 	if ok {
 		opts = state.opts
+		host = state.host
+		streamID = state.streamID
 	}
 	r.mu.RUnlock()
 	if !ok {
 		return true, "", fmt.Errorf("router: unknown conversation %v", id)
 	}
 
-	output, runErr := runInSandbox(ctx, opts.Sandbox, opts.CWD, opts.Env, command)
+	var output string
+	var runErr error
+	if host == nil || process.IsLocal(host.Name()) {
+		output, runErr = runInSandbox(ctx, opts.Sandbox, opts.CWD, opts.Env, command)
+	} else {
+		// The remote host runs it in the sandbox it built for this conversation.
+		res, err := host.Exec(ctx, process.ExecSpec{
+			Argv:           []string{"sh", "-c", command},
+			Dir:            opts.CWD,
+			Env:            opts.Env,
+			SessionSandbox: streamID,
+			Combined:       true,
+		})
+		output, runErr = string(res.Stdout), err
+		if err == nil && !res.OK() {
+			runErr = fmt.Errorf("exit status %d", res.ExitCode)
+		}
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "$ %s\n", command)

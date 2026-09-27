@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/elek/acpp/config"
+	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/types"
 )
 
@@ -24,6 +25,9 @@ import (
 type HookContext struct {
 	Meta types.ConversationMeta
 	CWD  string
+	// Host is the machine the conversation's agent runs on; commands a hook runs
+	// against CWD must go through it. Nil means this machine.
+	Host process.Host
 	// Trigger submits a follow-up prompt through the full router pipeline (fanned
 	// out to subscribers, sent to the agent) but BYPASSES Outgoing to prevent
 	// re-entrancy. The prompt is delivered after the message currently being
@@ -56,6 +60,9 @@ type SessionContext struct {
 	// BaseDir is the working directory requested for this session before any
 	// SessionHook rewrites it (equal to opts.CWD on entry).
 	BaseDir string
+	// Host is the machine the session's agent will run on; a hook touching the
+	// session's files must go through it. Nil means this machine.
+	Host process.Host
 	// RunningSessionsForDir reports how many sessions are currently live with the
 	// given base directory, letting a hook decide whether a directory is under
 	// contention. The session being created is not yet counted.
@@ -83,6 +90,18 @@ type SessionContext struct {
 // destroy it unobserved.
 type SessionHook interface {
 	SetupSession(sc SessionContext, opts *types.SessionOpts) (cleanup func(force bool), err error)
+}
+
+// Resumable is an OPTIONAL interface a SessionHook may implement so its session
+// survives a restart of the server while the agent keeps running on a remote
+// host. SessionState captures what SetupSession set up (called after it, may
+// return nil); after the restart the router builds a fresh hook instance and
+// calls ResumeSession with that state instead of SetupSession, which must not
+// set anything up again — only reconnect to what exists and return the same
+// teardown SetupSession would have.
+type Resumable interface {
+	SessionState() map[string]string
+	ResumeSession(sc SessionContext, state map[string]string) (cleanup func(force bool), err error)
 }
 
 // CloseGuard is an OPTIONAL interface a Hook may also implement to veto a

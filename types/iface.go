@@ -50,6 +50,10 @@ type SessionOpts struct {
 	// was created with. The conversation is still a new one on the router's side
 	// (fresh ConversationID and subprocess); only the ACP SessionID is reused.
 	ResumeSessionID acp.SessionId
+	// Location names the machine the agent runs on: empty or "localhost" for
+	// this one, otherwise a connected remote agent. Router.Create fills it from
+	// the project's stored location.
+	Location string
 }
 
 // SessionEvent pairs a session update with the session ID that produced it.

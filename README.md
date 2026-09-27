@@ -113,6 +113,38 @@ otlp:
 
 When `search_path` is configured, ACPP maps Discord channel names to project directories automatically. A channel named `myproject` will use `/home/user/projects/myproject` if it exists.
 
+### Remote agents
+
+A project can run its agent on another machine. On the server, set a shared
+secret (this enables the `/remote/ws` endpoint):
+
+```yaml
+remote:
+  secret: "..."            # or secret_file: ~/.config/acpp/remote.secret
+```
+
+On the other machine, run `acpp remote` with its own config:
+
+```yaml
+remote:
+  server: https://acpp.example.com
+  secret: "..."
+  location: gpu-box        # defaults to the hostname
+```
+
+Then set the project's `location` to `gpu-box` on `/project/<name>` (empty or
+`localhost` runs on the server). The project's `dir` must be set explicitly, as a
+path on that machine. The remote machine resolves the agent command
+(`agent_path`) and builds the sandbox from its own profiles; hooks (worktree,
+commit) and `!sh` commands run there too.
+
+A dropped connection is survived for 5 minutes on both sides without losing
+output. Restarting the server does not stop remote agents: the new server adopts
+their conversations when the remote agent reconnects (a turn in flight during the
+restart is lost). The secret travels in the clear unless the server is behind TLS
+(use `https://`), and the remote agent runs whatever the server asks, so only
+connect it to a server you trust over TLS or a private network.
+
 ## Database
 
 ACPP uses PostgreSQL for session persistence and event logging. Migrations run automatically on startup via [goose](https://github.com/pressly/goose).

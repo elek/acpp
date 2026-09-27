@@ -72,6 +72,41 @@ type Config struct {
 	// Router.resolveProject), which are parsed from its `hooks` column by
 	// ParseHookList into this same shape.
 	Hooks []HookConfig `yaml:"hooks,omitempty"`
+	// Remote configures remote agents: on the server, the secret they must
+	// present; on a remote machine (`acpp remote`), where to connect.
+	Remote RemoteConfig `yaml:"remote,omitempty"`
+}
+
+// RemoteConfig holds the remote agent settings. The server enables the remote
+// agent endpoint only when a secret is configured.
+type RemoteConfig struct {
+	// Secret is the shared secret remote agents authenticate with.
+	Secret string `yaml:"secret,omitempty"`
+	// SecretFile names a file holding the secret, as an alternative to Secret.
+	SecretFile string `yaml:"secret_file,omitempty"`
+	// Server is the server URL `acpp remote` connects to.
+	Server string `yaml:"server,omitempty"`
+	// Location is the name `acpp remote` registers under (hostname by default).
+	Location string `yaml:"location,omitempty"`
+}
+
+// ResolveSecret returns the configured secret, reading SecretFile when Secret
+// is empty. Empty means none is configured.
+func (r RemoteConfig) ResolveSecret() (string, error) {
+	if r.Secret != "" || r.SecretFile == "" {
+		return r.Secret, nil
+	}
+	path := r.SecretFile
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, rest)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", errors.Wrap(err, "reading remote secret file")
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 type ToolPermissions struct {

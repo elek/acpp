@@ -1,11 +1,12 @@
 package hook
 
 import (
+	"context"
 	"log/slog"
-	"os/exec"
 	"strings"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/process"
 )
 
 func init() {
@@ -20,9 +21,9 @@ func init() {
 type CommitHook struct {
 	hasCommitted bool
 	lastPrompt   string
-	// isDirty reports whether dir is a git repo with uncommitted changes. A field
-	// so tests can substitute it.
-	isDirty func(dir string) bool
+	// isDirty reports whether dir on host is a git repo with uncommitted
+	// changes. A field so tests can substitute it.
+	isDirty func(host process.Host, dir string) bool
 }
 
 // NewCommitHook creates a CommitHook backed by the real git working-tree check.
@@ -51,7 +52,7 @@ func (h *CommitHook) Incoming(hc HookContext, msg any) any {
 	if len(h.lastPrompt) <= 100 {
 		return msg
 	}
-	if h.isDirty == nil || !h.isDirty(hc.CWD) {
+	if h.isDirty == nil || !h.isDirty(hc.Host, hc.CWD) {
 		return msg
 	}
 
@@ -82,17 +83,15 @@ func promptText(req acp.PromptRequest) string {
 	return b.String()
 }
 
-// isGitDirty returns true if dir is inside a git repo with uncommitted changes.
-func isGitDirty(dir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	cmd.Dir = dir
-	if err := cmd.Run(); err != nil {
+// isGitDirty returns true if dir on host is inside a git repo with uncommitted
+// changes.
+func isGitDirty(host process.Host, dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	if _, err := process.Output(ctx, host, dir, "git", "rev-parse", "--is-inside-work-tree"); err != nil {
 		return false
 	}
-
-	cmd = exec.Command("git", "status", "--porcelain")
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := process.Output(ctx, host, dir, "git", "status", "--porcelain")
 	if err != nil {
 		return false
 	}

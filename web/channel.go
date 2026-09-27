@@ -98,6 +98,13 @@ func (c *WebChannel) Receive(ctx context.Context, rid *json.RawMessage, id types
 	case types.ConversationCreated:
 		// A new session row exists (pending): it should appear in the taskbar.
 		c.publishLifecycle(id.ConversationID, "created")
+	case types.ConversationAdopted:
+		// A conversation that outlived a server restart on a remote host is live
+		// again. Whichever channel started it, the browser can now drive it.
+		c.mu.Lock()
+		c.byID[id.ConversationID] = m.Meta
+		c.mu.Unlock()
+		c.publishLifecycle(id.ConversationID, "adopted")
 	case types.ConversationClosed:
 		// The session finished/errored: it drops out of the taskbar's live filter,
 		// and any page currently viewing it must finalize its status pill and hide

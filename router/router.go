@@ -33,6 +33,7 @@ import (
 // Receive while callers Create, Send and Close from other goroutines.
 type Router struct {
 	procs  *process.Manager
+	local  *process.LocalHost
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -44,6 +45,10 @@ type Router struct {
 	// Create time. Nil for routers built without a database (acpp cat, acpp run),
 	// in which case resolution falls back to the caller's opts plus cfg.
 	projects db.ProjectStore
+
+	// hosts resolves a non-local location to the remote host serving it. Nil
+	// when remote agents are not enabled; any non-local location then fails.
+	hosts func(location string) (process.Host, error)
 
 	// staleWarnedDirs remembers the directories already warned about for holding a
 	// leftover .acpp.yaml, so the warning fires once per directory, not per session.
@@ -86,11 +91,22 @@ func WithProjects(projects db.ProjectStore) Option {
 	}
 }
 
+// WithHosts supplies the resolver for remote locations: a project whose
+// location is not local runs its agent on the host it returns. Without it only
+// local projects can start.
+func WithHosts(hosts func(location string) (process.Host, error)) Option {
+	return func(r *Router) {
+		r.hosts = hosts
+	}
+}
+
 // New creates a Router with its own dedicated process manager.
 func New(opts ...Option) *Router {
 	ctx, cancel := context.WithCancel(context.Background())
+	procs := process.NewManager()
 	r := &Router{
-		procs:    process.NewManager(),
+		procs:    procs,
+		local:    process.NewLocalHost(procs),
 		ctx:      ctx,
 		cancel:   cancel,
 		cfg:      &config.Config{},
@@ -110,9 +126,16 @@ type SessionState struct {
 	sessionData acp.NewSessionResponse
 	acpInit     acp.InitializeResponse
 	connection  *acp.ClientSideConnection
-	// proc is the subprocess backing this conversation, retained so a single
+	// proc is the agent backing this conversation, retained so a single
 	// conversation can be closed without tearing down the whole router.
-	proc *process.Process
+	proc process.Handle
+	// host is the machine proc runs on; hooks and shell commands go through it.
+	// Immutable after Create.
+	host process.Host
+	// streamID is the ConversationID the process was started under. Restart
+	// rolls meta.ConversationID, but a remote host keeps knowing the process by
+	// this one. Immutable after Create.
+	streamID string
 	// opts are the options the session was created with, retained so Restart can
 	// re-issue NewSession against the same process with the same cwd.
 	opts types.SessionOpts
@@ -146,6 +169,14 @@ type SessionState struct {
 	// guards are this conversation's close guards — the subset of hooks that can
 	// veto a deliberate close. Immutable after Create.
 	guards []hook.CloseGuard
+}
+
+// location is the normalized location the conversation runs on.
+func (s *SessionState) location() string {
+	if s.host == nil {
+		return process.LocalName
+	}
+	return s.host.Name()
 }
 
 // runCleanups runs this session's hook teardown funcs exactly once, in reverse
@@ -203,6 +234,12 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	convID := uuid.NewString()
 	baseDir := opts.CWD
 
+	host, err := r.host(opts.Location)
+	if err != nil {
+		return types.ConversationMeta{}, err
+	}
+	location := host.Name()
+
 	// Session hooks run before the sandbox is resolved and the subprocess starts,
 	// so a hook may redirect opts.CWD and add opts.RWBinds. Each returns a cleanup
 	// func run when the conversation is finalized. On error, unwind the cleanups
@@ -212,11 +249,14 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	// conversation is announced so they land as its first messages, in order.
 	var notices []string
 	sc := hook.SessionContext{
-		Meta:                  types.ConversationMeta{ProjectID: opts.ProjectID, ConversationID: convID},
-		ConversationID:        convID,
-		BaseDir:               baseDir,
-		RunningSessionsForDir: r.runningSessionsForDir,
-		Notify:                func(text string) { notices = append(notices, text) },
+		Meta:           types.ConversationMeta{ProjectID: opts.ProjectID, ConversationID: convID},
+		ConversationID: convID,
+		BaseDir:        baseDir,
+		Host:           host,
+		RunningSessionsForDir: func(dir string) int {
+			return r.runningSessionsForDir(location, dir)
+		},
+		Notify: func(text string) { notices = append(notices, text) },
 	}
 	for _, h := range hooks {
 		sh, ok := h.(hook.SessionHook)
@@ -243,17 +283,36 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	}
 
 	// Build the sandbox now that opts.CWD / opts.RWBinds reflect any redirection.
-	if err := r.resolveSandbox(&opts, sbSettings); err != nil {
-		runCleanups(cleanups, false)
-		return types.ConversationMeta{}, err
+	// Only a local sandbox is built here; a remote host builds its own from the
+	// same settings, against its own profile files.
+	spec := process.Spec{
+		Agent:          opts.Agent,
+		Cwd:            opts.CWD,
+		Env:            opts.Env,
+		ConversationID: convID,
 	}
+	if process.IsLocal(location) {
+		if err := r.resolveSandbox(&opts, sbSettings); err != nil {
+			runCleanups(cleanups, false)
+			return types.ConversationMeta{}, err
+		}
+		spec.Sandbox = opts.Sandbox
+	} else if opts.Sandbox == nil && sbSettings.sbType != "" {
+		spec.SandboxSpec = process.SandboxSpec{
+			Type:     sbSettings.sbType,
+			Profiles: sbSettings.profiles,
+			ROBinds:  opts.ROBinds,
+			RWBinds:  opts.RWBinds,
+			PassEnv:  sbSettings.passEnv,
+		}
+		opts.SandboxType = sbSettings.sbType
+		opts.SandboxProfiles = sbSettings.profiles
+	}
+	opts.Location = location
+	desc := newDescriptor(convID, convID, opts, baseDir, hooks)
+	spec.Descriptor = desc.marshal()
 
-	ps, err := r.procs.Start(r.ctx, process.Spec{
-		Agent:   opts.Agent,
-		Cwd:     opts.CWD,
-		Env:     opts.Env,
-		Sandbox: opts.Sandbox,
-	})
+	ps, err := host.Start(r.ctx, spec)
 	if err != nil {
 		runCleanups(cleanups, false)
 		return types.ConversationMeta{}, err
@@ -267,6 +326,8 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 	state := &SessionState{
 		meta:     meta,
 		proc:     ps,
+		host:     host,
+		streamID: convID,
 		opts:     opts,
 		ready:    make(chan struct{}),
 		hooks:    hooks,
@@ -308,7 +369,8 @@ func (r *Router) Create(ctx context.Context, opts types.SessionOpts) (types.Conv
 		r.onMessage(ctx, state, rid, msg)
 	}
 
-	connection := acp.NewClientSideConnection(handler, ps.Stdin, ps.Stdout)
+	stdin, stdout := ps.Stdio()
+	connection := acp.NewClientSideConnection(handler, stdin, stdout)
 
 	r.mu.Lock()
 	state.connection = connection
@@ -394,9 +456,18 @@ func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (h
 			return nil, sandboxSettings{}, errors.Wrap(err, "loading project config")
 		}
 	}
-	r.warnStaleProjectFile(opts.CWD)
+	// Location: project row > caller. The remaining settings may name paths, so
+	// they are resolved on the machine the agent runs on.
+	if p.Location != "" {
+		opts.Location = p.Location
+	}
+	local := process.IsLocal(opts.Location)
+	if local {
+		r.warnStaleProjectFile(opts.CWD)
+	}
 
-	// Agent: project row > caller > config default, then resolved against AgentPath.
+	// Agent: project row > caller > config default, then resolved against
+	// AgentPath — on the host that runs it (a remote agent resolves it itself).
 	agent := opts.Agent
 	if p.Agent != "" {
 		agent = p.Agent
@@ -404,7 +475,10 @@ func (r *Router) resolveProject(ctx context.Context, opts *types.SessionOpts) (h
 	if agent == "" {
 		agent = r.cfg.Defaults.Agent
 	}
-	opts.Agent = r.cfg.ResolveAgent(agent)
+	if local {
+		agent = r.cfg.ResolveAgent(agent)
+	}
+	opts.Agent = agent
 
 	// Sandbox settings: project row > caller's type/profiles > config default.
 	// Only meaningful when the caller has not pre-built a Sandbox (resolveSandbox
@@ -491,17 +565,30 @@ func (r *Router) resolveSandbox(opts *types.SessionOpts, settings sandboxSetting
 	return nil
 }
 
-// runningSessionsForDir reports how many live conversations were created with the
-// given base directory (the directory originally requested, before any session
-// hook rewrote opts.CWD). A conversation is removed from the map on close, so map
+// host returns the machine a location names: this one for an empty or local
+// location, otherwise the connected remote agent.
+func (r *Router) host(location string) (process.Host, error) {
+	if process.IsLocal(location) {
+		return r.local, nil
+	}
+	if r.hosts == nil {
+		return nil, fmt.Errorf("location %q is remote, but remote agents are not enabled on this server", location)
+	}
+	return r.hosts(location)
+}
+
+// runningSessionsForDir reports how many live conversations on location were
+// created with the given base directory (the directory originally requested,
+// before any session hook rewrote opts.CWD). The same path on two machines is
+// two directories. A conversation is removed from the map on close, so map
 // membership is the liveness signal. Used by the worktree hook to detect a repo
 // that already has a running session.
-func (r *Router) runningSessionsForDir(dir string) int {
+func (r *Router) runningSessionsForDir(location, dir string) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	n := 0
 	for _, s := range r.sessions {
-		if s.baseDir == dir {
+		if s.baseDir == dir && s.location() == location {
 			n++
 		}
 	}
@@ -564,6 +651,7 @@ func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.R
 		// already carries the freshly assigned SessionID; subscribers needing the
 		// creation options fetch them via Router.Opts.
 		r.deliver(ctx, state, rid, meta, m)
+		r.pushDescriptor(state)
 		if ready != nil {
 			close(ready)
 		}
@@ -580,6 +668,7 @@ func (r *Router) onMessage(ctx context.Context, state *SessionState, rid *json.R
 		meta := state.meta
 		r.mu.Unlock()
 		r.deliver(ctx, state, rid, meta, m)
+		r.pushDescriptor(state)
 		if ready != nil {
 			close(ready)
 		}
@@ -774,6 +863,7 @@ func (r *Router) dispatch(ctx context.Context, state *SessionState, meta types.C
 		hc := hook.HookContext{
 			Meta: meta,
 			CWD:  state.opts.CWD,
+			Host: state.host,
 			Trigger: func(prompt string) error {
 				return r.triggerPrompt(ctx, state, prompt)
 			},
@@ -817,6 +907,7 @@ func (r *Router) deliver(ctx context.Context, state *SessionState, rid *json.Raw
 	hc := hook.HookContext{
 		Meta: meta,
 		CWD:  state.opts.CWD,
+		Host: state.host,
 		Trigger: func(prompt string) error {
 			pending = append(pending, prompt)
 			return nil
@@ -923,7 +1014,7 @@ func (r *Router) closeConversation(id types.ConversationMeta, errMsg string, for
 // scheduled job that started it never releases (every later tick is skipped as
 // "previous run still active"). Fanning an errored ConversationClosed lets every
 // subscriber finalize.
-func (r *Router) watchProcess(state *SessionState, ps *process.Process) {
+func (r *Router) watchProcess(state *SessionState, ps process.Handle) {
 	select {
 	case <-ps.Done():
 	case <-r.ctx.Done():
@@ -949,7 +1040,24 @@ func (r *Router) watchProcess(state *SessionState, ps *process.Process) {
 
 // Close shuts every conversation's subprocess down gracefully and releases the
 // router's resources. It is safe to call multiple times.
+//
+// Conversations whose agent runs on a remote host are detached, not closed: the
+// remote agent keeps them running and hands them back to the next server that
+// connects (see Adopt), so they are neither stopped nor finalized here.
 func (r *Router) Close() {
+	r.mu.Lock()
+	var detached []process.Detachable
+	for id, state := range r.sessions {
+		if d, ok := state.proc.(process.Detachable); ok {
+			delete(r.sessions, id)
+			detached = append(detached, d)
+		}
+	}
+	r.mu.Unlock()
+	for _, d := range detached {
+		d.Detach()
+	}
+
 	// Graceful first (stdin EOF -> wait -> SIGTERM per process), then cancel the
 	// router context as a backstop for anything still bound to it.
 	r.procs.CloseAll()

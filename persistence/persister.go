@@ -99,12 +99,64 @@ func (p *Persister) Receive(ctx context.Context, rid *json.RawMessage, id types.
 		p.finish(m.Old.ConversationID, "")
 	case types.ConversationClosed:
 		p.finish(m.Meta.ConversationID, m.Err)
+	case types.ConversationAdopted:
+		p.adopt(cid)
 	}
+}
+
+// sessionGetter is the read access the persister uses, when its store has it,
+// to pick up telemetry it did not accumulate itself (see stored).
+type sessionGetter interface {
+	GetSession(ctx context.Context, id string) (db.SessionRow, error)
+}
+
+// stored returns the telemetry already recorded for a session, so a
+// conversation that outlived a server restart keeps accumulating from its
+// totals instead of overwriting them with what this process has seen. Zero
+// when the store cannot be read.
+func (p *Persister) stored(sid string) types.StatusInfo {
+	g, ok := p.store.(sessionGetter)
+	if !ok {
+		return types.StatusInfo{}
+	}
+	row, err := g.GetSession(context.Background(), sid)
+	if err != nil {
+		return types.StatusInfo{}
+	}
+	return types.StatusInfo{
+		Model:      row.Model,
+		SDKVersion: row.SDKVersion,
+		PID:        row.PID,
+		HasUsage:   row.PromptCount > 0 || row.InputTokens > 0,
+		Usage: types.UsageInfo{
+			InputTokens:              row.InputTokens,
+			OutputTokens:             row.OutputTokens,
+			CacheCreationInputTokens: row.CacheCreationInputTokens,
+			CacheReadInputTokens:     row.CacheReadInputTokens,
+			ContextWindow:            row.ContextWindow,
+			ContextUsed:              row.ContextUsed,
+			CostUSD:                  row.CostUSD,
+			PromptCount:              row.PromptCount,
+		},
+	}
+}
+
+// adopt resumes tracking a conversation taken back after a server restart: its
+// row is made live again and its telemetry picks up from the stored totals.
+func (p *Persister) adopt(sid string) {
+	info := p.stored(sid)
+	info.Status = types.StatusPending
+	if err := p.store.ReopenSession(context.Background(), sid); err != nil {
+		slog.Error("persistence: reopen adopted session", "conversation", sid, "error", err)
+	}
+	p.mu.Lock()
+	p.track[sid] = &sessionState{info: info, lastModel: info.Model}
+	p.mu.Unlock()
 }
 
 func (p *Persister) insertSession(cid string, opts types.SessionOpts) {
 	err := p.store.InsertSession(context.Background(), cid, opts.Source,
-		opts.Agent, opts.CWD, opts.SandboxType, "", "", opts.ProjectID, opts.Env, p.now())
+		opts.Agent, opts.CWD, opts.SandboxType, opts.Location, "", opts.ProjectID, opts.Env, p.now())
 	if err != nil {
 		slog.Error("persistence: insert session", "conversation", cid, "error", err)
 		return
@@ -249,17 +301,22 @@ func (p *Persister) finish(sid, sessionError string) {
 	}
 	p.mu.Lock()
 	st := p.track[sid]
-	info := types.StatusInfo{}
+	var info types.StatusInfo
 	if st != nil {
 		info = st.info
+	}
+	delete(p.track, sid)
+	p.mu.Unlock()
+	if st == nil {
+		// Not tracked here (it ended on a remote host while no server was
+		// connected): keep the totals already stored.
+		info = p.stored(sid)
 	}
 	if sessionError != "" {
 		info.Status = types.StatusError
 	} else {
 		info.Status = types.StatusComplete
 	}
-	delete(p.track, sid)
-	p.mu.Unlock()
 
 	if err := p.store.FinishSession(context.Background(), sid, info, sessionError); err != nil {
 		slog.Error("persistence: finish session", "session", sid, "error", err)

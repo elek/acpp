@@ -26,11 +26,14 @@ type ProjectRow struct {
 	// "-NAME" to withhold one the default list grants.
 	SandboxEnv string
 	Permission string
-	Env             []string
-	Repo            string
-	Hooks           string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	Env        []string
+	Repo       string
+	Hooks      string
+	// Location names the machine the project's agent runs on: empty or
+	// "localhost" for the server itself, otherwise a connected remote agent.
+	Location  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ProjectListRow is a summary row returned by ListProjects.
@@ -38,6 +41,7 @@ type ProjectListRow struct {
 	Name       string
 	Dir        string
 	Agent      string
+	Location   string
 	HasRunning bool
 	// LastUsed is the most recent activity across the project's sessions
 	// (the latest of any session's created_at/finished_at). Zero when the
@@ -65,6 +69,7 @@ type SessionWriter interface {
 	SetACPSessionID(ctx context.Context, id, acpSessionID string) error
 	UpdateSession(ctx context.Context, id string, info acplib.StatusInfo) error
 	FinishSession(ctx context.Context, id string, info acplib.StatusInfo, sessionError string) error
+	ReopenSession(ctx context.Context, id string) error
 	AddPromptDuration(ctx context.Context, id string, durationMs int64) error
 	InsertLog(ctx context.Context, sessionID, eventType string, payload json.RawMessage) error
 }
@@ -101,6 +106,17 @@ func (s *PostgresStore) CompleteRunningSessions(ctx context.Context) (int64, err
 		return 0, errors.Wrap(err, "completing running sessions")
 	}
 	return tag.RowsAffected(), nil
+}
+
+// ReopenSession makes a finished session live again (pending, not finished).
+// Used when a conversation that outlived a server restart on a remote host is
+// adopted: startup marked its row complete (CompleteRunningSessions) while the
+// agent was in fact still running.
+func (s *PostgresStore) ReopenSession(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE session SET status = 'pending', error_msg = '', finished_at = NULL
+		WHERE id = $1`, id)
+	return errors.Wrap(err, "reopening session")
 }
 
 // InsertSession creates a new session row with initial parameters.
@@ -738,6 +754,7 @@ var validProjectFields = map[string]bool{
 	"permission":       true,
 	"repo":             true,
 	"hooks":            true,
+	"location":         true,
 }
 
 // GetProject returns the project with the given name.
@@ -753,9 +770,9 @@ func (s *PostgresStore) GetProject(ctx context.Context, name string) (ProjectRow
 	var r ProjectRow
 	var envJSON json.RawMessage
 	err = s.pool.QueryRow(ctx, `
-		SELECT name, agent, dir, sandbox, sandbox_profiles, sandbox_env, permission, env, repo, hooks, created_at, updated_at
+		SELECT name, agent, dir, sandbox, sandbox_profiles, sandbox_env, permission, env, repo, hooks, location, created_at, updated_at
 		FROM project WHERE name = $1`, name).Scan(
-		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.SandboxProfiles, &r.SandboxEnv, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.CreatedAt, &r.UpdatedAt,
+		&r.Name, &r.Agent, &r.Dir, &r.Sandbox, &r.SandboxProfiles, &r.SandboxEnv, &r.Permission, &envJSON, &r.Repo, &r.Hooks, &r.Location, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return ProjectRow{}, errors.Wrap(err, "querying project")
@@ -814,12 +831,12 @@ func (s *PostgresStore) SetProjectEnv(ctx context.Context, name string, entries 
 // ListProjects returns all projects from the project table with running status.
 func (s *PostgresStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.name, p.dir, p.agent,
+		SELECT p.name, p.dir, p.agent, p.location,
 		       COALESCE(bool_or(s.status IN ('running', 'pending')), false) AS has_running,
 		       MAX(GREATEST(s.created_at, s.finished_at)) AS last_used
 		FROM project p
 		LEFT JOIN session s ON s.project_name = p.name
-		GROUP BY p.name, p.dir, p.agent
+		GROUP BY p.name, p.dir, p.agent, p.location
 		ORDER BY last_used DESC NULLS LAST, p.name`)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing projects")
@@ -829,7 +846,7 @@ func (s *PostgresStore) ListProjects(ctx context.Context) ([]ProjectListRow, err
 	for rows.Next() {
 		var r ProjectListRow
 		var lastUsed *time.Time
-		if err := rows.Scan(&r.Name, &r.Dir, &r.Agent, &r.HasRunning, &lastUsed); err != nil {
+		if err := rows.Scan(&r.Name, &r.Dir, &r.Agent, &r.Location, &r.HasRunning, &lastUsed); err != nil {
 			return nil, errors.Wrap(err, "scanning project row")
 		}
 		if lastUsed != nil {

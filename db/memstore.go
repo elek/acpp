@@ -82,6 +82,20 @@ func (m *MemStore) InsertSession(ctx context.Context, id, sourceName, agent, dir
 	return nil
 }
 
+func (m *MemStore) ReopenSession(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("session not found: %s", id)
+	}
+	s.Status = "pending"
+	s.ErrorMsg = ""
+	s.FinishedAt = nil
+	m.sessions[id] = s
+	return nil
+}
+
 func (m *MemStore) UpdateSession(ctx context.Context, id string, info acplib.StatusInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -559,6 +573,8 @@ func (m *MemStore) SetProjectField(ctx context.Context, name, field, value strin
 		p.Repo = value
 	case "hooks":
 		p.Hooks = value
+	case "location":
+		p.Location = value
 	}
 	p.UpdatedAt = time.Now()
 	m.projects[name] = p
@@ -635,6 +651,7 @@ func (m *MemStore) ListProjects(ctx context.Context) ([]ProjectListRow, error) {
 			Name:       p.Name,
 			Dir:        p.Dir,
 			Agent:      p.Agent,
+			Location:   p.Location,
 			HasRunning: running[p.Name],
 			LastUsed:   lastUsed[p.Name],
 		})

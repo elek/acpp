@@ -3,12 +3,12 @@ package web
 import (
 	"context"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/elek/acpp/db"
+	"github.com/elek/acpp/process"
 	"github.com/labstack/echo/v4"
 )
 
@@ -31,6 +31,7 @@ type ProjectJSON struct {
 	Name         string `json:"name"`
 	Dir          string `json:"dir"`
 	Agent        string `json:"agent"`
+	Location     string `json:"location,omitempty"`
 	Branch       string `json:"branch"`
 	Dirty        bool   `json:"dirty"`
 	ChatCount    int    `json:"chat_count"`
@@ -116,8 +117,13 @@ func (s *Server) apiProjects(c echo.Context) error {
 			ChatCount:    len(sessions),
 			RunningCount: running,
 		}
+		pj.Location = p.Location
 		if wantGit && p.Dir != "" {
-			pj.Branch, pj.Dirty = gitInfo(p.Dir)
+			// Only where the project lives: a remote location that is not
+			// connected has no badge rather than a stale or local one.
+			if host := s.hostFor(p.Location); host != nil {
+				pj.Branch, pj.Dirty = gitInfo(host, p.Dir)
+			}
 		}
 		out = append(out, pj)
 	}
@@ -264,17 +270,17 @@ func truncate(s string, n int) string {
 
 // gitInfo returns the current branch and dirty flag for dir. It is best-effort:
 // on any error (not a repo, git missing, timeout) it returns "", false.
-func gitInfo(dir string) (branch string, dirty bool) {
+func gitInfo(host process.Host, dir string) (branch string, dirty bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 
-	b, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	b, err := process.Output(ctx, host, "", "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", false
 	}
 	branch = strings.TrimSpace(string(b))
 
-	st, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain").Output()
+	st, err := process.Output(ctx, host, "", "git", "-C", dir, "status", "--porcelain")
 	if err != nil {
 		return branch, false
 	}

@@ -46,3 +46,12 @@ type ConversationClosed struct {
 	Meta ConversationMeta
 	Err  string
 }
+
+// ConversationAdopted is emitted through the router's subscriber stream when a
+// conversation that outlived a restart of this server — its agent kept running
+// on a remote host — is taken back into the router (Router.Adopt). Its session
+// row already exists and was never finalized; subscribers that key live state
+// off ConversationCreated (a channel's routing table) should register it again.
+type ConversationAdopted struct {
+	Meta ConversationMeta
+}

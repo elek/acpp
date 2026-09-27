@@ -12,6 +12,7 @@ import (
 	"github.com/elek/acpp/config"
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/hook"
+	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/sandbox"
 
 	"github.com/labstack/echo/v4"
@@ -184,9 +185,17 @@ func (s *Server) viewTaskbar(c echo.Context) error {
 // project should run in: the explicit dir when one is known, otherwise the
 // directory found by name in the search paths. The second result is false when
 // neither is available.
+//
+// search_path is a list of directories on this machine, so a project on a
+// remote location is only found through its stored dir.
 func (s *Server) resolveSessionDir(projectName, dir string) (string, bool) {
 	if dir != "" {
 		return dir, true
+	}
+	if s.projects != nil {
+		if p, err := s.projects.GetProject(context.Background(), projectName); err == nil && !process.IsLocal(p.Location) {
+			return p.Dir, p.Dir != ""
+		}
 	}
 	return config.FindProjectDir(s.searchPaths, projectName)
 }
@@ -385,6 +394,7 @@ func projectConfigRows(p db.ProjectRow, defaults SessionDefaults) []configKV {
 		return "(default: " + fallback + ")"
 	}
 	return []configKV{
+		{Key: "location", Field: "location", Value: p.Location, Editor: editorText, Placeholder: "(default: " + process.LocalName + ")"},
 		{Key: "dir", Field: "dir", Value: p.Dir, Editor: editorText, Placeholder: "(unset)"},
 		{Key: "agent", Field: "agent", Value: p.Agent, Editor: editorText, Placeholder: unsetOr(defaults.Agent)},
 		{Key: "sandbox", Field: "sandbox", Value: p.Sandbox, Editor: editorText, Placeholder: unsetOr(defaults.Sandbox)},
@@ -552,6 +562,11 @@ func (s *Server) createProjectSession(c echo.Context) error {
 		// No directory could be found: record a stillborn conversation carrying
 		// the failure so the frontend can open its window and show what happened.
 		msg := fmt.Sprintf("Could not start a session: no directory named %q found in the search paths. Set the project's directory or add its parent to search_path.", projectName)
+		if s.projects != nil {
+			if p, err := s.projects.GetProject(c.Request().Context(), projectName); err == nil && !process.IsLocal(p.Location) {
+				msg = fmt.Sprintf("Could not start a session: project %q runs on location %q, which needs the project's directory set (search_path only covers this machine).", projectName, p.Location)
+			}
+		}
 		id := s.creator.StartFailedSessionWeb(dir, projectName, msg)
 		return c.JSON(http.StatusCreated, map[string]string{"id": id, "dir": "", "failed": "true"})
 	}

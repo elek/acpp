@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/types"
 )
 
@@ -51,8 +50,11 @@ type WorktreeHook struct {
 	// created (no contention, or not a git repo). Instances are per-conversation
 	// and these are written before the conversation is registered with the router,
 	// so later reads from close paths need no lock.
-	repo string
-	wt   string
+	repo   string
+	wt     string
+	branch string
+	// host is the machine the session runs on; nil means this one.
+	host process.Host
 }
 
 // NewWorktreeHook returns a WorktreeHook placing worktrees under location
@@ -68,9 +70,10 @@ func (h *WorktreeHook) Incoming(hc HookContext, msg any) any { return msg }
 // target directory is a contended git repo. See WorktreeHook.
 func (h *WorktreeHook) SetupSession(sc SessionContext, opts *types.SessionOpts) (func(bool), error) {
 	repo := opts.CWD
+	h.host = sc.Host
 
 	// Only act on a git repository.
-	if !isGitRepo(repo) {
+	if !isGitRepo(h.host, repo) {
 		return nil, nil
 	}
 	// Only act on contention: a session must already be running on this repo.
@@ -79,13 +82,13 @@ func (h *WorktreeHook) SetupSession(sc SessionContext, opts *types.SessionOpts) 
 	}
 
 	wt := h.worktreePath(repo, sc.ConversationID)
-	if err := gitWorktreeAdd(repo, sc.ConversationID, wt); err != nil {
+	if err := gitWorktreeAdd(h.host, repo, sc.ConversationID, wt); err != nil {
 		return nil, fmt.Errorf("worktree add: %w", err)
 	}
-	h.repo, h.wt = repo, wt
+	h.repo, h.wt, h.branch = repo, wt, sc.ConversationID
 
 	// Keep the worktree location out of the parent's untracked list (best-effort).
-	if err := appendGitExclude(repo, h.location); err != nil {
+	if err := appendGitExclude(h.host, repo, h.location); err != nil {
 		slog.Warn("worktree hook: could not update .git/info/exclude", "repo", repo, "err", err)
 	}
 
@@ -99,24 +102,45 @@ func (h *WorktreeHook) SetupSession(sc SessionContext, opts *types.SessionOpts) 
 	if sc.Notify != nil {
 		sc.Notify(fmt.Sprintf("This repo is already in use — working in an isolated worktree: %s", wt))
 	}
+	return h.teardown, nil
+}
 
-	cleanup := func(force bool) {
-		// An unforced teardown (crash, shutdown, a close nobody confirmed) must not
-		// take uncommitted work with it. Leaving the worktree registered keeps it
-		// reachable from the origin repo — `git worktree list` still shows it — so
-		// the changes can be recovered or committed later.
-		if !force {
-			if reason := h.CanClose(); reason != "" {
-				slog.Info("worktree hook: keeping worktree with uncommitted changes",
-					"worktree", wt, "branch", sc.ConversationID, "reason", reason)
-				return
-			}
-		}
-		if err := gitWorktreeRemove(repo, wt); err != nil {
-			slog.Warn("worktree hook: remove failed", "worktree", wt, "err", err)
+// SessionState records the worktree SetupSession created, if any. Implements
+// Resumable.
+func (h *WorktreeHook) SessionState() map[string]string {
+	if h.wt == "" {
+		return nil
+	}
+	return map[string]string{"repo": h.repo, "worktree": h.wt, "branch": h.branch}
+}
+
+// ResumeSession reattaches to a worktree created before a server restart, so
+// the close guard and teardown keep protecting it. Implements Resumable.
+func (h *WorktreeHook) ResumeSession(sc SessionContext, state map[string]string) (func(bool), error) {
+	h.host = sc.Host
+	if state["worktree"] == "" {
+		return nil, nil
+	}
+	h.repo, h.wt, h.branch = state["repo"], state["worktree"], state["branch"]
+	return h.teardown, nil
+}
+
+// teardown removes the worktree when the session ends. An unforced teardown
+// (crash, shutdown, a close nobody confirmed) must not take uncommitted work
+// with it. Leaving the worktree registered keeps it reachable from the origin
+// repo — `git worktree list` still shows it — so the changes can be recovered or
+// committed later.
+func (h *WorktreeHook) teardown(force bool) {
+	if !force {
+		if reason := h.CanClose(); reason != "" {
+			slog.Info("worktree hook: keeping worktree with uncommitted changes",
+				"worktree", h.wt, "branch", h.branch, "reason", reason)
+			return
 		}
 	}
-	return cleanup, nil
+	if err := gitWorktreeRemove(h.host, h.repo, h.wt); err != nil {
+		slog.Warn("worktree hook: remove failed", "worktree", h.wt, "err", err)
+	}
 }
 
 // CanClose vetoes a deliberate close while this conversation's worktree holds
@@ -133,7 +157,7 @@ func (h *WorktreeHook) CanClose() string {
 	if h.wt == "" {
 		return ""
 	}
-	changes, err := gitStatusPorcelain(h.wt)
+	changes, err := gitStatusPorcelain(h.host, h.wt)
 	if err != nil {
 		slog.Warn("worktree hook: could not check for uncommitted changes; allowing close",
 			"worktree", h.wt, "err", err)
@@ -148,15 +172,11 @@ func (h *WorktreeHook) CanClose() string {
 
 // gitStatusPorcelain returns the paths git reports as changed in dir: tracked
 // modifications plus untracked files, excluding ignored ones.
-func gitStatusPorcelain(dir string) ([]string, error) {
+func gitStatusPorcelain(host process.Host, dir string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain")
-	// Without a WaitDelay, killing git on timeout is not enough: any grandchild it
-	// left behind still holds the output pipe open and Output blocks on the read.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
+	out, err := process.Output(ctx, host, "", "git", "-C", dir, "status", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
@@ -193,55 +213,49 @@ func (h *WorktreeHook) worktreePath(repo, convID string) string {
 	return filepath.Join(loc, convID)
 }
 
-// isGitRepo reports whether dir contains a .git entry (dir or file).
-func isGitRepo(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
+// isGitRepo reports whether dir on host contains a .git entry (dir or file).
+func isGitRepo(host process.Host, dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	_, err := process.Output(ctx, host, "", "sh", "-c", `test -e "$1"`, "sh", filepath.Join(dir, ".git"))
 	return err == nil
 }
 
 // gitWorktreeAdd creates a worktree at path on a new branch from current HEAD.
-func gitWorktreeAdd(repo, branch, path string) error {
-	return runGit(repo, "worktree", "add", "-b", branch, path)
+func gitWorktreeAdd(host process.Host, repo, branch, path string) error {
+	return runGit(host, repo, "worktree", "add", "-b", branch, path)
 }
 
 // gitWorktreeRemove force-removes the worktree at path, keeping its branch.
-func gitWorktreeRemove(repo, path string) error {
-	return runGit(repo, "worktree", "remove", "--force", path)
+func gitWorktreeRemove(host process.Host, repo, path string) error {
+	return runGit(host, repo, "worktree", "remove", "--force", path)
 }
 
-// runGit runs `git -C repo args...`, returning combined output on error.
-func runGit(repo string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
+// runGit runs `git -C repo args...` on host, returning its output on error.
+func runGit(host process.Host, repo string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gitWriteTimeout)
+	defer cancel()
+	_, err := process.Output(ctx, host, "", append([]string{"git", "-C", repo}, args...)...)
+	return err
 }
+
+// gitWriteTimeout bounds git commands that change a repo (worktree add and
+// remove), which may check out a large tree.
+const gitWriteTimeout = 2 * time.Minute
+
+// excludeScript appends $2 to $1/.git/info/exclude unless a line already equals
+// it, first terminating a last line that lacks a newline. A shell script (not Go
+// file I/O) so it works the same on a remote host.
+const excludeScript = `f="$1/.git/info/exclude"
+if [ -f "$f" ] && grep -qxF -e "$2" "$f"; then exit 0; fi
+mkdir -p "$(dirname "$f")" || exit 1
+if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then printf '\n' >> "$f"; fi
+printf '%s\n' "$2" >> "$f"`
 
 // appendGitExclude adds entry to <repo>/.git/info/exclude if not already present.
-func appendGitExclude(repo, entry string) error {
-	path := filepath.Join(repo, ".git", "info", "exclude")
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == entry {
-			return nil // already excluded
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	prefix := ""
-	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
-		prefix = "\n"
-	}
-	_, err = f.WriteString(prefix + entry + "\n")
+func appendGitExclude(host process.Host, repo, entry string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	_, err := process.Output(ctx, host, "", "sh", "-c", excludeScript, "sh", repo, entry)
 	return err
 }

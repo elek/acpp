@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/elek/acpp/acp"
+	"github.com/elek/acpp/process"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +28,7 @@ func ctxCapturing(dirty bool, triggered *[]string) HookContext {
 func TestCommitHook_TriggersCommitThenAmend(t *testing.T) {
 	var triggered []string
 	hc := ctxCapturing(true, &triggered)
-	h := &CommitHook{isDirty: func(string) bool { return true }}
+	h := &CommitHook{isDirty: func(process.Host, string) bool { return true }}
 
 	// First substantive turn -> commit.
 	h.Outgoing(hc, longPrompt())
@@ -43,7 +44,7 @@ func TestCommitHook_TriggersCommitThenAmend(t *testing.T) {
 func TestCommitHook_SkipsShortPrompt(t *testing.T) {
 	var triggered []string
 	hc := ctxCapturing(true, &triggered)
-	h := &CommitHook{isDirty: func(string) bool { return true }}
+	h := &CommitHook{isDirty: func(process.Host, string) bool { return true }}
 
 	h.Outgoing(hc, acp.PromptRequest{Prompt: []acp.ContentBlock{acp.TextBlock("yes")}})
 	h.Incoming(hc, acp.PromptResponse{})
@@ -53,7 +54,7 @@ func TestCommitHook_SkipsShortPrompt(t *testing.T) {
 func TestCommitHook_SkipsCleanTree(t *testing.T) {
 	var triggered []string
 	hc := ctxCapturing(false, &triggered)
-	h := &CommitHook{isDirty: func(string) bool { return false }}
+	h := &CommitHook{isDirty: func(process.Host, string) bool { return false }}
 
 	h.Outgoing(hc, longPrompt())
 	h.Incoming(hc, acp.PromptResponse{})
@@ -63,7 +64,7 @@ func TestCommitHook_SkipsCleanTree(t *testing.T) {
 func TestCommitHook_IgnoresNonResponseMessages(t *testing.T) {
 	var triggered []string
 	hc := ctxCapturing(true, &triggered)
-	h := &CommitHook{isDirty: func(string) bool { return true }}
+	h := &CommitHook{isDirty: func(process.Host, string) bool { return true }}
 
 	h.Outgoing(hc, longPrompt())
 	// A non-response message should not trigger anything.

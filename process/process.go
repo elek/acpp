@@ -29,6 +29,42 @@ type Spec struct {
 	Cwd     string          // working directory
 	Env     []string        // KEY=VALUE entries appended to the (sandbox-filtered) host env
 	Sandbox sandbox.Sandbox // optional sandbox wrapper; nil means run directly
+
+	// SandboxSpec is the unresolved sandbox configuration. It is used only when
+	// Sandbox is nil: the host that runs the agent builds the sandbox itself, from
+	// its own profiles, which is what a remote host needs (a sandbox built here
+	// would reference this machine's files).
+	SandboxSpec SandboxSpec
+
+	// ConversationID names the conversation the process backs. A remote host uses
+	// it as the stream id; the local host ignores it.
+	ConversationID string
+	// Descriptor is opaque conversation state a remote host keeps next to the
+	// process and hands back on reconnect, so a restarted server can adopt the
+	// conversation. The local host ignores it.
+	Descriptor []byte
+}
+
+// SandboxSpec is a sandbox configuration that has not been resolved against a
+// machine's profile files yet. The zero value means no sandbox.
+type SandboxSpec struct {
+	Type     string   `json:"type,omitempty"`
+	Profiles string   `json:"profiles,omitempty"`
+	ROBinds  []string `json:"ro_binds,omitempty"`
+	RWBinds  []string `json:"rw_binds,omitempty"`
+	PassEnv  []string `json:"pass_env,omitempty"`
+}
+
+// Resolve builds the sandbox on this machine, or returns nil for the zero spec.
+func (s SandboxSpec) Resolve(cwd string) (sandbox.Sandbox, error) {
+	if s.Type == "" {
+		return nil, nil
+	}
+	sb, err := sandbox.ResolveSandbox(s.Type, s.Profiles, cwd, s.ROBinds, s.RWBinds, s.PassEnv)
+	if err != nil {
+		return nil, fmt.Errorf("resolving sandbox %q: %w", s.Type, err)
+	}
+	return sb, nil
 }
 
 // buildEnv assembles the environment for the agent subprocess: the host
@@ -47,6 +83,32 @@ func buildEnv(spec Spec) []string {
 	return append(env, spec.Env...)
 }
 
+// Handle is a running agent, wherever it runs: a local subprocess (*Process) or
+// a process on a remote host streamed over the network. It is the only thing the
+// ACP layer needs to talk to the agent.
+type Handle interface {
+	// Stdio returns the agent's stdin and stdout.
+	Stdio() (io.WriteCloser, io.Reader)
+	// PID is the process id on the machine running it.
+	PID() int
+	// Done is closed once the agent has exited and its stdout is drained.
+	Done() <-chan struct{}
+	// Stderr returns the captured stderr output so far (trimmed).
+	Stderr() string
+	// Close shuts the agent down gracefully and waits (bounded) for it to exit.
+	Close()
+}
+
+// Detachable is implemented by handles whose process can outlive this server:
+// a remote host keeps the process running when the server goes away and hands
+// it back when the server returns.
+type Detachable interface {
+	// UpdateDescriptor replaces the opaque state the host keeps for the process.
+	UpdateDescriptor(desc []byte) error
+	// Detach lets go of the process without stopping it.
+	Detach()
+}
+
 // Process is a running agent subprocess. It owns the OS-level concerns —
 // pipes, PID, and graceful shutdown — and is the only handle the ACP layer
 // needs to talk to the agent.
@@ -58,11 +120,14 @@ type Process struct {
 	cancel context.CancelFunc
 	pid    int
 	done   chan struct{}
-	stderr *bytes.Buffer
+	stderr *lockedBuffer
 
 	mu          sync.Mutex
 	stdinClosed bool
 }
+
+// Stdio implements Handle.
+func (p *Process) Stdio() (io.WriteCloser, io.Reader) { return p.Stdin, p.Stdout }
 
 // PID returns the subprocess PID.
 func (p *Process) PID() int { return p.pid }
@@ -133,6 +198,14 @@ func (m *Manager) Start(parent context.Context, spec Spec) (*Process, error) {
 		return nil, fmt.Errorf("empty agent command")
 	}
 	cmdName, args := agentArgs[0], agentArgs[1:]
+	if spec.Sandbox == nil {
+		sb, err := spec.SandboxSpec.Resolve(spec.Cwd)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		spec.Sandbox = sb
+	}
 	if spec.Sandbox != nil {
 		cmdName, args = spec.Sandbox.Wrap(agentArgs[0], agentArgs[1:])
 	}
@@ -165,9 +238,10 @@ func (m *Manager) Start(parent context.Context, spec Spec) (*Process, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	// Capture stderr for logging (e.g. sandbox errors).
-	var stderrBuf bytes.Buffer
-	go io.Copy(&stderrBuf, stderr)
+	// Capture stderr for logging (e.g. sandbox errors). The copy runs
+	// concurrently with readers of Stderr, hence the lock.
+	stderrBuf := &lockedBuffer{}
+	go io.Copy(stderrBuf, stderr)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -181,7 +255,7 @@ func (m *Manager) Start(parent context.Context, spec Spec) (*Process, error) {
 		cancel: cancel,
 		pid:    cmd.Process.Pid,
 		done:   make(chan struct{}),
-		stderr: &stderrBuf,
+		stderr: stderrBuf,
 	}
 
 	m.mu.Lock()
@@ -238,4 +312,22 @@ func (m *Manager) CloseAll() {
 	for _, p := range procs {
 		p.Close()
 	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for one writer and concurrent readers.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

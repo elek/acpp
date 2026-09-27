@@ -11,6 +11,7 @@ import (
 	"github.com/elek/acpp/acp"
 	"github.com/elek/acpp/db"
 	"github.com/elek/acpp/hook"
+	"github.com/elek/acpp/process"
 	"github.com/elek/acpp/types"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +67,7 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, repo, o1.CWD, "first session must use the repo directly")
 	require.Empty(t, o1.RWBinds)
-	require.Equal(t, 1, rt.runningSessionsForDir(repo))
+	require.Equal(t, 1, rt.runningSessionsForDir(process.LocalName, repo))
 	require.NoDirExists(t, filepath.Join(repo, ".worktree"))
 
 	// Second session on the same repo: contention -> isolated worktree.
@@ -79,16 +80,16 @@ func TestWorktreeHookContentionEndToEnd(t *testing.T) {
 	require.Equal(t, []string{repo}, o2.RWBinds, "original repo must be RW-bound")
 	require.DirExists(t, wt)
 	// baseDir tracking: the worktree'd session still counts toward the repo.
-	require.Equal(t, 2, rt.runningSessionsForDir(repo))
+	require.Equal(t, 2, rt.runningSessionsForDir(process.LocalName, repo))
 
 	// Closing the second session removes its worktree and drops the count.
 	rt.CloseConversation(m2)
 	require.NoDirExists(t, wt)
-	require.Equal(t, 1, rt.runningSessionsForDir(repo))
+	require.Equal(t, 1, rt.runningSessionsForDir(process.LocalName, repo))
 
 	// Closing the first session (which never got a worktree) is clean.
 	rt.CloseConversation(m1)
-	require.Equal(t, 0, rt.runningSessionsForDir(repo))
+	require.Equal(t, 0, rt.runningSessionsForDir(process.LocalName, repo))
 }
 
 // dirtyWorktreeRouter starts two sessions on one repo so the second lands in an

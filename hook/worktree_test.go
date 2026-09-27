@@ -313,3 +313,42 @@ func TestWorktreeHookRegistered(t *testing.T) {
 	require.Len(t, hooks, 1)
 	require.IsType(t, &WorktreeHook{}, hooks[0])
 }
+
+func TestAppendGitExclude(t *testing.T) {
+	repo := initRepo(t)
+	path := filepath.Join(repo, ".git", "info", "exclude")
+	// A last line without a newline must be terminated before appending.
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("# comment\nfoo"), 0o644))
+
+	require.NoError(t, appendGitExclude(nil, repo, ".worktree"))
+	require.NoError(t, appendGitExclude(nil, repo, ".worktree")) // idempotent
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "# comment\nfoo\n.worktree\n", string(got))
+}
+
+// A hook rebuilt after a server restart resumes guarding and tearing down the
+// worktree its predecessor created, from the state the predecessor exported.
+func TestWorktreeHookResumeSession(t *testing.T) {
+	h, repo, wt, _ := contendedWorktree(t, "conv9")
+	state := h.SessionState()
+	require.Equal(t, wt, state["worktree"])
+
+	resumed := NewWorktreeHook(".worktree")
+	cleanup, err := resumed.ResumeSession(SessionContext{ConversationID: "conv9"}, state)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("wip"), 0o644))
+	require.Contains(t, resumed.CanClose(), "uncommitted changes")
+
+	cleanup(true)
+	require.False(t, worktreeExists(t, repo, wt))
+
+	// A hook that created no worktree has nothing to resume.
+	cleanup, err = NewWorktreeHook(".worktree").ResumeSession(SessionContext{}, nil)
+	require.NoError(t, err)
+	require.Nil(t, cleanup)
+}
