@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -273,13 +274,28 @@ func (s *Server) Start(ctx context.Context) error {
 	return err
 }
 
+// sessionsPerPage is the page size of the /sessions list.
+const sessionsPerPage = 50
+
 func (s *Server) listSessions(c echo.Context) error {
-	sessions, err := s.store.ListSessions(c.Request().Context())
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	if page < 1 {
+		page = 1
+	}
+	sessions, total, err := s.store.ListSessionsPage(c.Request().Context(), sessionsPerPage, (page-1)*sessionsPerPage)
 	if err != nil {
 		return err
 	}
+	pages := max((total+sessionsPerPage-1)/sessionsPerPage, 1)
 	return c.Render(http.StatusOK, "list.html", map[string]interface{}{
 		"Sessions":       sessions,
+		"Page":           page,
+		"Pages":          pages,
+		"Total":          total,
+		"PrevPage":       page - 1,
+		"NextPage":       page + 1,
+		"HasPrev":        page > 1,
+		"HasNext":        page < pages,
 		"CurrentPage":    "sessions",
 		"Defaults":       s.defaults,
 		"CreatorEnabled": s.creator != nil,

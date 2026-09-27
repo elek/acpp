@@ -36,6 +36,8 @@
 
   .cost { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8125em; font-weight: 500; }
   .tokens { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 0.75em; color: #78716c; }
+  .pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.75em; margin-top: 1em; font-size: 0.8125em; color: #78716c; }
+  .pager .btn.disabled { opacity: 0.4; pointer-events: none; }
   .empty-state { text-align: center; padding: 3em 1em; color: #78716c; font-style: italic; }
 
   .header-spacer { flex: 1; }
@@ -122,6 +124,13 @@
   </tbody>
 </table>
 </div>
+{{if gt .Pages 1}}
+<nav class="pager">
+  <span>Page {{.Page}} of {{.Pages}} &middot; {{.Total}} sessions</span>
+  {{if .HasPrev}}<a class="btn" href="/sessions?page=1">&laquo; First</a><a class="btn" href="/sessions?page={{.PrevPage}}">&lsaquo; Prev</a>{{else}}<span class="btn disabled">&laquo; First</span><span class="btn disabled">&lsaquo; Prev</span>{{end}}
+  {{if .HasNext}}<a class="btn" href="/sessions?page={{.NextPage}}">Next &rsaquo;</a><a class="btn" href="/sessions?page={{.Pages}}">Last &raquo;</a>{{else}}<span class="btn disabled">Next &rsaquo;</span><span class="btn disabled">Last &raquo;</span>{{end}}
+</nav>
+{{end}}
 </main>
 
 {{if .CreatorEnabled}}

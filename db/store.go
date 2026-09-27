@@ -77,6 +77,7 @@ type SessionWriter interface {
 // SessionReader is the interface for reading session and log data.
 type SessionReader interface {
 	ListSessions(ctx context.Context) ([]SessionRow, error)
+	ListSessionsPage(ctx context.Context, limit, offset int) ([]SessionRow, int, error)
 	GetSession(ctx context.Context, id string) (SessionRow, error)
 	GetSessionLogs(ctx context.Context, sessionID string) ([]LogRow, error)
 	GetLog(ctx context.Context, id int64) (LogRow, error)
@@ -288,13 +289,32 @@ type LogRow struct {
 
 // ListSessions returns all sessions ordered by creation time descending.
 func (s *PostgresStore) ListSessions(ctx context.Context) ([]SessionRow, error) {
+	return s.querySessions(ctx, `ORDER BY created_at DESC`)
+}
+
+// ListSessionsPage returns one page of sessions ordered by creation time
+// descending, together with the total number of sessions.
+func (s *PostgresStore) ListSessionsPage(ctx context.Context, limit, offset int) ([]SessionRow, int, error) {
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM session`).Scan(&total); err != nil {
+		return nil, 0, errors.Wrap(err, "counting sessions")
+	}
+	rows, err := s.querySessions(ctx, `ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// querySessions selects all session columns followed by the given clause.
+func (s *PostgresStore) querySessions(ctx context.Context, clause string, args ...any) ([]SessionRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_name, agent, dir, sandbox, node, git_commit, project_name, env, status, error_msg, model, sdk_version, pid,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
 			context_used, context_window,
 			cost_usd, prompt_count, prompt_duration_ms, created_at, finished_at
 		FROM session
-		ORDER BY created_at DESC`)
+		`+clause, args...)
 	if err != nil {
 		return nil, errors.Wrap(err, "querying sessions")
 	}
@@ -314,7 +334,7 @@ func (s *PostgresStore) ListSessions(ctx context.Context) ([]SessionRow, error) 
 		}
 		result = append(result, r)
 	}
-	return result, nil
+	return result, errors.Wrap(rows.Err(), "iterating session rows")
 }
 
 // GetSession returns a single session by ID.

@@ -195,6 +195,16 @@ func (m *MemStore) ListSessions(ctx context.Context) ([]SessionRow, error) {
 	return result, nil
 }
 
+func (m *MemStore) ListSessionsPage(ctx context.Context, limit, offset int) ([]SessionRow, int, error) {
+	all, _ := m.ListSessions(ctx)
+	total := len(all)
+	if offset > total {
+		offset = total
+	}
+	end := min(offset+limit, total)
+	return all[offset:end], total, nil
+}
+
 func (m *MemStore) GetSession(ctx context.Context, id string) (SessionRow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
